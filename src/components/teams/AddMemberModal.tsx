@@ -10,7 +10,7 @@ interface Props {
 }
 
 export const AddMemberModal: React.FC<Props> = ({ isOpen, onClose, teamId }) => {
-  const { addTeamMember, teams } = useApp();
+  const { addTeamMember, teams, addToast } = useApp();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>('member');
   const [subgroupId, setSubgroupId] = useState<string>('');
@@ -34,11 +34,24 @@ export const AddMemberModal: React.FC<Props> = ({ isOpen, onClose, teamId }) => 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) return;
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      addToast('Please provide a valid email address.', 'error');
+      return;
+    }
+
+    if (role === 'subgroup_leader' && !subgroupId) {
+      if (!activeTeam?.subgroups || activeTeam.subgroups.length === 0) {
+        addToast('Please create a subgroup in this team first before assigning a Sub-Group Leader.', 'error');
+        return;
+      }
+      addToast('Please select a subgroup for the Sub-Group Leader.', 'error');
+      return;
+    }
 
     setIsLoading(true);
     const success = await addTeamMember(teamId, {
-      email: email.trim(),
+      email: cleanEmail,
       role,
       subgroupId: subgroupId || undefined,
     });

@@ -1468,8 +1468,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addTeam = async (newTeam: { name: string; description: string; deadline: string }): Promise<boolean> => {
-    if (!user) {
-      addToast('Must be logged in to create a team.', 'error');
+    if (!user || !isValidUuid(user.id)) {
+      addToast('Must be signed in with a valid workspace profile to create a team.', 'error');
       return false;
     }
     try {
