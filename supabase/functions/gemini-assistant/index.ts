@@ -59,6 +59,136 @@ Supported action types and parameter schemas:
 If the user asks to create multiple items (e.g., "create 3 tasks for the release"), include multiple action objects inside the "actions" array.
 Always format your conversational message cleanly in GitHub-flavored markdown.`;
 
+// In-memory JWKS cache for low-latency cryptographic verification
+let cachedJwks: { keys: any[]; fetchedAt: number; issuer: string } | null = null;
+
+function base64UrlToUint8Array(base64Url: string): Uint8Array {
+  const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = base64.length % 4;
+  const padded = pad ? base64 + '='.repeat(4 - pad) : base64;
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Cryptographically verifies Clerk JWTs against trusted Clerk JWKS.
+ * Enforces RSA signature verification, expiration, and issuer constraints.
+ */
+async function verifyClerkJwt(
+  rawToken: string,
+  expectedIssuer?: string
+): Promise<{ sub: string; email?: string } | null> {
+  const parts = rawToken.split('.');
+  if (parts.length !== 3) return null;
+
+  let header: { kid?: string; alg?: string };
+  let payload: { sub?: string; iss?: string; exp?: number; nbf?: number; email?: string; [key: string]: any };
+
+  try {
+    header = JSON.parse(new TextDecoder().decode(base64UrlToUint8Array(parts[0])));
+    payload = JSON.parse(new TextDecoder().decode(base64UrlToUint8Array(parts[1])));
+  } catch {
+    return null;
+  }
+
+  if (!header.kid || header.alg !== 'RS256' || !payload.sub || !payload.iss) {
+    return null;
+  }
+
+  // Validate issuer matches configured or trusted Clerk domain
+  const issuer = payload.iss.replace(/\/$/, '');
+  if (expectedIssuer && issuer !== expectedIssuer.replace(/\/$/, '')) {
+    console.error(`[gemini-assistant] JWT issuer mismatch: ${issuer} vs expected ${expectedIssuer}`);
+    return null;
+  }
+  if (!issuer.startsWith('https://') || (!issuer.includes('clerk') && !expectedIssuer)) {
+    console.error(`[gemini-assistant] Untrusted JWT issuer: ${issuer}`);
+    return null;
+  }
+
+  // Check expiration & active window
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp === 'number' && payload.exp < now) {
+    console.warn('[gemini-assistant] Clerk token expired');
+    return null;
+  }
+  if (typeof payload.nbf === 'number' && payload.nbf > now + 60) {
+    console.warn('[gemini-assistant] Clerk token not yet active');
+    return null;
+  }
+
+  // Fetch or retrieve cached JWKS (cache for 1 hour)
+  const CACHE_TTL_MS = 60 * 60 * 1000;
+  if (!cachedJwks || cachedJwks.issuer !== issuer || Date.now() - cachedJwks.fetchedAt > CACHE_TTL_MS) {
+    try {
+      const jwksRes = await fetch(`${issuer}/.well-known/jwks.json`);
+      if (!jwksRes.ok) throw new Error(`JWKS HTTP ${jwksRes.status}`);
+      const data = await jwksRes.json();
+      cachedJwks = { keys: data.keys || [], fetchedAt: Date.now(), issuer };
+    } catch (err) {
+      console.error('[gemini-assistant] Failed to fetch Clerk JWKS:', err);
+      if (!cachedJwks || cachedJwks.issuer !== issuer) return null;
+    }
+  }
+
+  let targetJwk = cachedJwks.keys.find((k: any) => k.kid === header.kid);
+  if (!targetJwk) {
+    // If key not in cache, refetch once to handle key rotation
+    try {
+      const jwksRes = await fetch(`${issuer}/.well-known/jwks.json`);
+      if (jwksRes.ok) {
+        const data = await jwksRes.json();
+        cachedJwks = { keys: data.keys || [], fetchedAt: Date.now(), issuer };
+        targetJwk = cachedJwks.keys.find((k: any) => k.kid === header.kid);
+      }
+    } catch {
+      // ignore
+    }
+    if (!targetJwk) {
+      console.error(`[gemini-assistant] No matching JWK found for kid: ${header.kid}`);
+      return null;
+    }
+  }
+
+  // Cryptographic RS256 signature verification via Web Crypto API
+  try {
+    const cryptoKey = await crypto.subtle.importKey(
+      'jwk',
+      targetJwk,
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
+
+    const signedData = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+    const signatureBytes = base64UrlToUint8Array(parts[2]);
+
+    const isValid = await crypto.subtle.verify(
+      'RSASSA-PKCS1-v1_5',
+      cryptoKey,
+      signatureBytes,
+      signedData
+    );
+
+    if (!isValid) {
+      console.error('[gemini-assistant] Clerk cryptographic signature verification failed');
+      return null;
+    }
+
+    return {
+      sub: payload.sub,
+      email: payload.email || payload.email_address || payload.primary_email_address,
+    };
+  } catch (cryptoErr) {
+    console.error('[gemini-assistant] Crypto verification error:', cryptoErr);
+    return null;
+  }
+}
+
 serve(async (req: Request) => {
   // 1. Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -68,7 +198,7 @@ serve(async (req: Request) => {
   const tTotalStart = performance.now();
 
   try {
-    // 2. Validate Authentication via user's JWT
+    // 2. Validate Authentication via caller JWT
     const tAuthStart = performance.now();
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
@@ -99,50 +229,15 @@ serve(async (req: Request) => {
       global: { headers: { Authorization: authHeader } },
     });
 
-    // Dual-Auth Verification: Support both Clerk JWTs and legacy Supabase sessions
-    const parseJwtPayload = (token: string): any => {
-      try {
-        const raw = token.replace(/^Bearer\s+/i, '');
-        const parts = raw.split('.');
-        if (parts.length < 2) return null;
-        const base64Url = parts[1];
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const json = atob(base64);
-        return JSON.parse(json);
-      } catch {
-        return null;
-      }
-    };
-
-    const jwtClaims = parseJwtPayload(authHeader);
+    const rawToken = authHeader.replace(/^Bearer\s+/i, '').trim();
     let authenticatedUserId: string | null = null;
     let authenticatedUserEmail: string | null = null;
 
-    if (jwtClaims?.sub && typeof jwtClaims.sub === 'string' && jwtClaims.sub.startsWith('user_')) {
-      // 1. Enforce Token Expiry verification
-      const nowSec = Math.floor(Date.now() / 1000);
-      if (typeof jwtClaims.exp === 'number' && jwtClaims.exp < nowSec) {
-        return new Response(
-          JSON.stringify({
-            error: 'Unauthorized. Session token has expired. Please sign in again.',
-            code: 'GEMINI_PERMISSION_DENIED',
-          }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+    // Cryptographic Clerk JWT Verification
+    const configuredIssuer = Deno.env.get('CLERK_ISSUER_URL');
+    const clerkVerified = await verifyClerkJwt(rawToken, configuredIssuer);
 
-      // 2. Validate Issuer if configured
-      const configuredIssuer = Deno.env.get('CLERK_ISSUER_URL');
-      if (configuredIssuer && jwtClaims.iss && jwtClaims.iss !== configuredIssuer) {
-        return new Response(
-          JSON.stringify({
-            error: 'Unauthorized. Token issuer mismatch.',
-            code: 'GEMINI_PERMISSION_DENIED',
-          }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
+    if (clerkVerified) {
       // Caller authenticated with Clerk. Resolve canonical profile UUID from public.profiles
       const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || supabaseAnonKey;
       const adminClient = createClient(supabaseUrl, serviceRoleKey);
@@ -150,12 +245,12 @@ serve(async (req: Request) => {
       const { data: profile } = await adminClient
         .from('profiles')
         .select('id, email')
-        .eq('clerk_user_id', jwtClaims.sub)
+        .eq('clerk_user_id', clerkVerified.sub)
         .maybeSingle();
 
       if (profile) {
         authenticatedUserId = profile.id;
-        authenticatedUserEmail = profile.email || jwtClaims.email || null;
+        authenticatedUserEmail = profile.email || clerkVerified.email || null;
       }
     }
 
