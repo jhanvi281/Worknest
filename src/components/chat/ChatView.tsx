@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
+import { validateChatFile } from '../../services/chatService';
 import {
   Hash,
   Users,
@@ -34,6 +35,7 @@ export const ChatView: React.FC = () => {
     deleteMessage,
     toggleReaction,
     uploadChatAttachment,
+    downloadChatAttachment,
     createChannel,
     refreshChannels,
     refreshMessages,
@@ -73,6 +75,24 @@ export const ChatView: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, activeChannelId]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isCreateChannelOpen) {
+          setIsCreateChannelOpen(false);
+        } else if (showComposerEmojiPicker) {
+          setShowComposerEmojiPicker(false);
+        } else if (reactionPickerMsgId) {
+          setReactionPickerMsgId(null);
+        } else if (editingMessageId) {
+          setEditingMessageId(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isCreateChannelOpen, showComposerEmojiPicker, reactionPickerMsgId, editingMessageId]);
 
   const filteredChannels = channels.filter((c) => {
     if (!searchQuery.trim()) return true;
@@ -179,18 +199,18 @@ export const ChatView: React.FC = () => {
   return (
     <div className="h-[calc(100vh-5rem)] p-4 md:p-6 max-w-7xl mx-auto flex flex-col md:flex-row gap-4 animate-fade-in">
       {/* LEFT PANEL: Channels & Subgroups List */}
-      <div className="w-full md:w-80 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col overflow-hidden shrink-0">
-        <div className="p-4 border-b border-slate-200 dark:border-slate-800">
+      <div className="w-full md:w-80 bg-white dark:bg-[#141414] rounded-3xl border border-[#E5E5E5] dark:border-[#333333] shadow-sm flex flex-col overflow-hidden shrink-0">
+        <div className="p-4 border-b border-[#E5E5E5] dark:border-[#333333]">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-bold text-slate-900 dark:text-white">Conversations</span>
+            <span className="text-sm font-bold text-[#171717] dark:text-[#FAFAFA]">Conversations</span>
             <div className="flex items-center gap-1.5">
-              <span className="text-xs bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 font-semibold px-2.5 py-0.5 rounded-full">
+              <span className="text-xs bg-orange-50 dark:bg-orange-950/40 text-[#F97316] font-semibold px-2.5 py-0.5 rounded-full">
                 Team Chat
               </span>
               {canCreateChannel && (
                 <button
                   onClick={() => setIsCreateChannelOpen(true)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  className="p-1 rounded-lg text-[#737373] dark:text-[#A3A3A3] hover:text-[#F97316] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] transition-colors"
                   title="Create Channel"
                 >
                   <Plus className="w-4 h-4" />
@@ -200,34 +220,34 @@ export const ChatView: React.FC = () => {
           </div>
 
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+            <Search className="w-3.5 h-3.5 text-[#737373] dark:text-[#A3A3A3] absolute left-3 top-2.5" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search channels..."
-              className="w-full pl-9 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full pl-9 pr-3 py-1.5 rounded-xl border border-[#E5E5E5] dark:border-[#333333] bg-[#FAFAFA] dark:bg-[#1C1C1C] text-xs text-[#171717] dark:text-[#FAFAFA] focus:outline-none focus:ring-1 focus:ring-[#F97316]"
             />
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-4">
           {isLoadingChannels ? (
-            <div className="p-8 text-center text-slate-400 space-y-2">
-              <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
-              <div className="text-xs font-semibold text-slate-500">Loading channels...</div>
+            <div className="p-8 text-center text-[#737373] dark:text-[#A3A3A3] space-y-2">
+              <div className="w-5 h-5 border-2 border-[#F97316] border-t-transparent rounded-full animate-spin mx-auto" />
+              <div className="text-xs font-semibold text-[#737373] dark:text-[#A3A3A3]">Loading channels...</div>
             </div>
           ) : channelsError ? (
             <div className="p-4 text-center text-rose-500 space-y-2 text-xs">
               <div>{channelsError}</div>
-              <button onClick={refreshChannels} className="text-indigo-600 hover:underline font-bold">
+              <button onClick={refreshChannels} className="text-[#F97316] hover:underline font-bold">
                 Retry
               </button>
             </div>
           ) : channels.length === 0 ? (
-            <div className="p-6 text-center text-slate-400 space-y-3">
-              <div className="text-xs font-semibold text-slate-600 dark:text-slate-400">No channels found</div>
-              <p className="text-[11px] text-slate-500">
+            <div className="p-6 text-center text-[#737373] dark:text-[#A3A3A3] space-y-3">
+              <div className="text-xs font-semibold text-[#171717] dark:text-[#FAFAFA]">No channels found</div>
+              <p className="text-[11px] text-[#737373] dark:text-[#A3A3A3]">
                 {canCreateChannel
                   ? 'No chat channels exist for this team yet. Create one to begin.'
                   : 'No chat channels available for your team.'}
@@ -235,7 +255,7 @@ export const ChatView: React.FC = () => {
               {canCreateChannel && (
                 <button
                   onClick={() => setIsCreateChannelOpen(true)}
-                  className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition"
+                  className="px-3 py-1.5 rounded-xl bg-[#F97316] hover:bg-[#EA580C] dark:hover:bg-[#FB923C] text-white font-bold text-xs shadow-sm transition-colors"
                 >
                   + Create Channel
                 </button>
@@ -246,25 +266,25 @@ export const ChatView: React.FC = () => {
               {/* Main Team Channel */}
               {mainChannels.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 mb-1.5">
+                  <div className="text-[10px] font-bold text-[#737373] dark:text-[#A3A3A3] uppercase tracking-wider px-2 mb-1.5">
                     Main Team
                   </div>
                   {mainChannels.map((c) => (
                     <button
                       key={c.id}
                       onClick={() => setActiveChannelId(c.id)}
-                      className={`w-full text-left p-3 rounded-2xl flex items-center justify-between transition ${
+                      className={`w-full text-left p-3 rounded-2xl flex items-center justify-between transition-colors ${
                         activeChannelId === c.id
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          ? 'bg-[#F97316] text-white shadow-sm'
+                          : 'text-[#171717] dark:text-[#FAFAFA] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C]'
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <Hash className={`w-4 h-4 shrink-0 ${activeChannelId === c.id ? 'text-white' : 'text-slate-400'}`} />
+                        <Hash className={`w-4 h-4 shrink-0 ${activeChannelId === c.id ? 'text-white' : 'text-[#737373] dark:text-[#A3A3A3]'}`} />
                         <div className="min-w-0">
                           <div className="text-xs font-bold truncate">#{c.name}</div>
                           {c.lastMessage && (
-                            <div className={`text-[10px] truncate ${activeChannelId === c.id ? 'text-indigo-100' : 'text-slate-400'}`}>
+                            <div className={`text-[10px] truncate ${activeChannelId === c.id ? 'text-orange-100' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
                               {c.lastMessage}
                             </div>
                           )}
@@ -278,25 +298,25 @@ export const ChatView: React.FC = () => {
               {/* Subgroups Channels */}
               {subgroupChannels.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 mb-1.5">
+                  <div className="text-[10px] font-bold text-[#737373] dark:text-[#A3A3A3] uppercase tracking-wider px-2 mb-1.5">
                     Subgroup Discussions
                   </div>
                   {subgroupChannels.map((c) => (
                     <button
                       key={c.id}
                       onClick={() => setActiveChannelId(c.id)}
-                      className={`w-full text-left p-3 rounded-2xl flex items-center justify-between transition ${
+                      className={`w-full text-left p-3 rounded-2xl flex items-center justify-between transition-colors ${
                         activeChannelId === c.id
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          ? 'bg-[#F97316] text-white shadow-sm'
+                          : 'text-[#171717] dark:text-[#FAFAFA] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C]'
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <Users className={`w-4 h-4 shrink-0 ${activeChannelId === c.id ? 'text-white' : 'text-purple-400'}`} />
+                        <Users className={`w-4 h-4 shrink-0 ${activeChannelId === c.id ? 'text-white' : 'text-[#F97316]'}`} />
                         <div className="min-w-0">
                           <div className="text-xs font-bold truncate">#{c.name}</div>
                           {c.lastMessage && (
-                            <div className={`text-[10px] truncate ${activeChannelId === c.id ? 'text-indigo-100' : 'text-slate-400'}`}>
+                            <div className={`text-[10px] truncate ${activeChannelId === c.id ? 'text-orange-100' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
                               {c.lastMessage}
                             </div>
                           )}
@@ -312,16 +332,16 @@ export const ChatView: React.FC = () => {
       </div>
 
       {/* RIGHT PANEL: Active Conversation Area */}
-      <div className="flex-1 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col overflow-hidden">
+      <div className="flex-1 bg-white dark:bg-[#141414] rounded-3xl border border-[#E5E5E5] dark:border-[#333333] shadow-sm flex flex-col overflow-hidden">
         {!activeChannel ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 space-y-4">
-            <div className="p-4 rounded-3xl bg-slate-100 dark:bg-slate-800 text-indigo-600">
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-[#737373] dark:text-[#A3A3A3] space-y-4">
+            <div className="p-4 rounded-3xl bg-orange-50 dark:bg-orange-950/40 text-[#F97316]">
               <Hash className="w-8 h-8" />
             </div>
-            <div className="text-base font-bold text-slate-800 dark:text-slate-200">
+            <div className="text-base font-bold text-[#171717] dark:text-[#FAFAFA]">
               No Channel Selected
             </div>
-            <p className="text-xs text-slate-500 max-w-sm">
+            <p className="text-xs text-[#737373] dark:text-[#A3A3A3] max-w-sm">
               {channels.length === 0
                 ? canCreateChannel
                   ? 'This team has no chat channels yet. Create one to begin team discussions.'
@@ -331,7 +351,7 @@ export const ChatView: React.FC = () => {
             {channels.length === 0 && canCreateChannel && (
               <button
                 onClick={() => setIsCreateChannelOpen(true)}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition"
+                className="px-4 py-2 rounded-xl bg-[#F97316] hover:bg-[#EA580C] dark:hover:bg-[#FB923C] text-white font-bold text-xs shadow-sm transition-colors"
               >
                 + Create First Channel
               </button>
@@ -340,34 +360,34 @@ export const ChatView: React.FC = () => {
         ) : (
           <>
             {/* Conversation Header */}
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div className="p-4 border-b border-[#E5E5E5] dark:border-[#333333] flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600">
+                <div className="p-2.5 rounded-2xl bg-orange-50 dark:bg-orange-950/40 text-[#F97316]">
                   {activeChannel.isSubgroup ? <Users className="w-5 h-5" /> : <Hash className="w-5 h-5" />}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="text-base font-bold text-slate-900 dark:text-white">#{activeChannel.name}</h2>
+                    <h2 className="text-base font-bold text-[#171717] dark:text-[#FAFAFA]">#{activeChannel.name}</h2>
                     <span className="flex items-center gap-1 text-[10px] text-emerald-500 font-semibold bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                       {onlineCount > 0 ? `${onlineCount} Online` : '1 Online'}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400">{activeChannel.description || 'Channel conversation'}</p>
+                  <p className="text-xs text-[#737373] dark:text-[#A3A3A3]">{activeChannel.description || 'Channel conversation'}</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleAudioCallClick}
-                  className="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  className="p-2 rounded-xl text-[#737373] dark:text-[#A3A3A3] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] transition-colors"
                   title="Audio Call (Phase F)"
                 >
-                  <Phone className="w-4 h-4 text-indigo-600" />
+                  <Phone className="w-4 h-4 text-[#F97316]" />
                 </button>
                 <button
                   onClick={handleVideoCallClick}
-                  className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md flex items-center gap-1.5 transition"
+                  className="px-3.5 py-1.5 rounded-xl bg-[#F97316] hover:bg-[#EA580C] dark:hover:bg-[#FB923C] text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-colors"
                   title="Video Call (Phase F)"
                 >
                   <Video className="w-4 h-4" /> Video Call
@@ -378,9 +398,9 @@ export const ChatView: React.FC = () => {
             {/* Message Feed */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
               {isLoadingMessages ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-400 space-y-3">
-                  <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-xs font-semibold text-slate-500">Loading messages...</span>
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-[#737373] dark:text-[#A3A3A3] space-y-3">
+                  <div className="w-6 h-6 border-2 border-[#F97316] border-t-transparent rounded-full animate-spin" />
+                  <span className="text-xs font-semibold text-[#737373] dark:text-[#A3A3A3]">Loading messages...</span>
                 </div>
               ) : messagesError ? (
                 <div className="flex-1 flex flex-col items-center justify-center p-8 text-rose-500 space-y-2">
@@ -388,20 +408,20 @@ export const ChatView: React.FC = () => {
                   <div className="text-xs font-semibold">{messagesError}</div>
                   <button
                     onClick={() => refreshMessages(activeChannel.id)}
-                    className="text-xs text-indigo-600 hover:underline font-bold"
+                    className="text-xs text-[#F97316] hover:underline font-bold"
                   >
                     Retry
                   </button>
                 </div>
               ) : messages.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 space-y-3">
-                  <div className="p-4 rounded-3xl bg-slate-100 dark:bg-slate-800 text-indigo-600">
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-[#737373] dark:text-[#A3A3A3] space-y-3">
+                  <div className="p-4 rounded-3xl bg-orange-50 dark:bg-orange-950/40 text-[#F97316]">
                     <Hash className="w-8 h-8" />
                   </div>
-                  <div className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                  <div className="text-sm font-bold text-[#171717] dark:text-[#FAFAFA]">
                     Welcome to #{activeChannel.name}!
                   </div>
-                  <p className="text-xs text-slate-500 max-w-sm">
+                  <p className="text-xs text-[#737373] dark:text-[#A3A3A3] max-w-sm">
                     This is the beginning of the #{activeChannel.name} channel. Send a message below to start collaborating.
                   </p>
                 </div>
@@ -418,15 +438,15 @@ export const ChatView: React.FC = () => {
                         alt={msg.senderName}
                         className="w-8 h-8 rounded-full object-cover shrink-0 mt-0.5"
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.senderName)}&background=6366f1&color=fff`;
+                          (e.currentTarget as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.senderName)}&background=f97316&color=fff`;
                         }}
                       />
 
                       <div className={`max-w-md space-y-1 ${isMe ? 'items-end text-right' : ''}`}>
                         {/* Header: Sender, Timestamp, Edit / Delete / Reaction Actions */}
                         <div className={`flex items-center gap-1.5 text-xs ${isMe ? 'justify-end' : ''}`}>
-                          <span className="font-bold text-slate-800 dark:text-slate-200">{msg.senderName}</span>
-                          <span className="text-[10px] text-slate-400">{msg.timestamp}</span>
+                          <span className="font-bold text-[#171717] dark:text-[#FAFAFA]">{msg.senderName}</span>
+                          <span className="text-[10px] text-[#737373] dark:text-[#A3A3A3]">{msg.timestamp}</span>
 
                           {/* Quick Actions (Hover) */}
                           <div className="flex items-center gap-0.5 relative">
@@ -434,7 +454,7 @@ export const ChatView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setReactionPickerMsgId(reactionPickerMsgId === msg.id ? null : msg.id)}
-                              className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-amber-500 rounded transition"
+                              className="opacity-0 group-hover:opacity-100 p-1 text-[#737373] dark:text-[#A3A3A3] hover:text-[#F97316] rounded transition-colors"
                               title="Add reaction"
                             >
                               <Smile className="w-3.5 h-3.5" />
@@ -445,14 +465,14 @@ export const ChatView: React.FC = () => {
                               <div
                                 className={`absolute z-30 ${
                                   isMe ? 'right-0' : 'left-0'
-                                } top-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl p-1.5 flex items-center gap-1 animate-fade-in`}
+                                } top-full mt-1 bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#333333] rounded-2xl shadow-xl p-1.5 flex items-center gap-1 animate-fade-in`}
                               >
                                 {reactionEmojis.map((emoji) => (
                                   <button
                                     key={emoji}
                                     type="button"
                                     onClick={() => handleReactionClick(msg.id, emoji)}
-                                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl text-sm transition hover:scale-125"
+                                    className="p-1.5 hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] rounded-xl text-sm transition hover:scale-125"
                                   >
                                     {emoji}
                                   </button>
@@ -465,7 +485,7 @@ export const ChatView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => handleStartEdit(msg)}
-                                className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-indigo-600 rounded transition"
+                                className="opacity-0 group-hover:opacity-100 p-1 text-[#737373] dark:text-[#A3A3A3] hover:text-[#F97316] rounded transition-colors"
                                 title="Edit message"
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
@@ -477,7 +497,7 @@ export const ChatView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => deleteMessage(msg.id)}
-                                className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-500 rounded transition"
+                                className="opacity-0 group-hover:opacity-100 p-1 text-[#737373] dark:text-[#A3A3A3] hover:text-rose-500 rounded transition-colors"
                                 title="Delete message"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -488,7 +508,7 @@ export const ChatView: React.FC = () => {
 
                         {/* Inline Edit Form OR Message Content Bubble */}
                         {isCurrentlyEditing ? (
-                          <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-indigo-400 dark:border-indigo-600 shadow-sm text-left">
+                          <div className="space-y-2 p-3 bg-[#FAFAFA] dark:bg-[#1C1C1C] rounded-2xl border border-orange-500/50 shadow-sm text-left">
                             <input
                               type="text"
                               value={editingText}
@@ -499,14 +519,14 @@ export const ChatView: React.FC = () => {
                               }}
                               autoFocus
                               disabled={isSavingEdit}
-                              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              className="w-full px-3 py-1.5 rounded-xl border border-[#E5E5E5] dark:border-[#333333] bg-white dark:bg-[#141414] text-xs text-[#171717] dark:text-[#FAFAFA] focus:outline-none focus:ring-2 focus:ring-[#F97316]"
                             />
                             <div className="flex items-center justify-end gap-1.5 text-[11px]">
                               <button
                                 type="button"
                                 onClick={handleCancelEdit}
                                 disabled={isSavingEdit}
-                                className="px-2.5 py-1 rounded-lg text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition"
+                                className="px-2.5 py-1 rounded-lg text-[#737373] dark:text-[#A3A3A3] hover:text-[#171717] dark:hover:text-[#FAFAFA] transition-colors"
                               >
                                 Cancel
                               </button>
@@ -514,7 +534,7 @@ export const ChatView: React.FC = () => {
                                 type="button"
                                 disabled={isSavingEdit || !editingText.trim()}
                                 onClick={() => handleSaveEdit(msg.id)}
-                                className="px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 disabled:opacity-50 transition"
+                                className="px-3 py-1 rounded-lg bg-[#F97316] text-white font-bold hover:bg-[#EA580C] dark:hover:bg-[#FB923C] disabled:opacity-50 transition-colors"
                               >
                                 {isSavingEdit ? 'Saving...' : 'Save'}
                               </button>
@@ -524,54 +544,67 @@ export const ChatView: React.FC = () => {
                           <div
                             className={`p-3.5 rounded-2xl text-xs leading-relaxed ${
                               isMe
-                                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
+                                ? 'bg-[#F97316] text-white shadow-sm'
+                                : 'bg-[#FAFAFA] dark:bg-[#1C1C1C] text-[#171717] dark:text-[#FAFAFA] border border-[#E5E5E5] dark:border-[#333333]'
                             }`}
                           >
                             <span>{msg.text}</span>
                             {msg.isEdited && (
-                              <span className={`ml-1.5 text-[10px] ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
+                              <span className={`ml-1.5 text-[10px] ${isMe ? 'text-orange-200' : 'text-[#737373] dark:text-[#A3A3A3]'}`}>
                                 (edited)
                               </span>
                             )}
 
                             {/* Real Attachments Display */}
                             {msg.attachments && msg.attachments.length > 0 && (
-                              <div className="mt-2.5 space-y-1.5">
-                                {msg.attachments.map((att, attIdx) => (
-                                  <div
-                                    key={attIdx}
-                                    className={`p-2 rounded-xl flex items-center justify-between gap-2.5 ${
-                                      isMe
-                                        ? 'bg-black/15 text-white'
-                                        : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
-                                    }`}
-                                  >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <FileText className={`w-4 h-4 shrink-0 ${isMe ? 'text-indigo-200' : 'text-indigo-600 dark:text-indigo-400'}`} />
-                                      <div className="min-w-0">
-                                        <div className="text-xs font-semibold truncate">{att.name}</div>
-                                        <div className="text-[10px] opacity-75">{att.size}</div>
+                              <div className="mt-2.5 space-y-2">
+                                {msg.attachments.map((att, attIdx) => {
+                                  const isImage = Boolean(
+                                    att.type?.startsWith('image/') ||
+                                    /\.(png|jpe?g|gif|webp|svg)$/i.test(att.name)
+                                  );
+                                  return (
+                                    <div key={attIdx} className="space-y-1.5">
+                                      {isImage && att.url && (
+                                        <div className="max-w-xs overflow-hidden rounded-xl border border-black/10 dark:border-white/10 shadow-sm">
+                                          <img
+                                            src={att.url}
+                                            alt={att.name}
+                                            className="max-h-60 w-auto rounded-xl object-cover cursor-pointer hover:opacity-95 transition"
+                                            onClick={() => window.open(att.url, '_blank', 'noopener,noreferrer')}
+                                          />
+                                        </div>
+                                      )}
+                                      <div
+                                        className={`p-2 rounded-xl flex items-center justify-between gap-2.5 ${
+                                          isMe
+                                            ? 'bg-black/15 text-white'
+                                            : 'bg-white dark:bg-[#141414] text-[#171717] dark:text-[#FAFAFA] border border-[#E5E5E5] dark:border-[#333333]'
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <FileText className={`w-4 h-4 shrink-0 ${isMe ? 'text-orange-200' : 'text-[#F97316]'}`} />
+                                          <div className="min-w-0">
+                                            <div className="text-xs font-semibold truncate">{att.name}</div>
+                                            <div className="text-[10px] opacity-75">{att.size}</div>
+                                          </div>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => downloadChatAttachment(att)}
+                                          className={`p-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 ${
+                                            isMe
+                                              ? 'bg-white/20 hover:bg-white/30 text-white'
+                                              : 'bg-orange-50 dark:bg-orange-950/40 text-[#F97316] hover:bg-orange-100 dark:hover:bg-orange-900/60'
+                                          }`}
+                                          title="Download attachment"
+                                        >
+                                          <Download className="w-3.5 h-3.5" />
+                                        </button>
                                       </div>
                                     </div>
-                                    {att.url && (
-                                      <a
-                                        href={att.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        download={att.name}
-                                        className={`p-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 ${
-                                          isMe
-                                            ? 'bg-white/20 hover:bg-white/30 text-white'
-                                            : 'bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900'
-                                        }`}
-                                        title="Download file"
-                                      >
-                                        <Download className="w-3.5 h-3.5" />
-                                      </a>
-                                    )}
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
@@ -585,10 +618,10 @@ export const ChatView: React.FC = () => {
                                 key={idx}
                                 type="button"
                                 onClick={() => handleReactionClick(msg.id, r.emoji)}
-                                className={`px-2.5 py-0.5 rounded-full border text-[11px] flex items-center gap-1 transition ${
+                                className={`px-2.5 py-0.5 rounded-full border text-[11px] flex items-center gap-1 transition-colors ${
                                   r.userReacted
-                                    ? 'bg-indigo-50 dark:bg-indigo-950/80 border-indigo-400 dark:border-indigo-600 text-indigo-700 dark:text-indigo-300 font-bold shadow-sm'
-                                    : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                    ? 'bg-orange-50 dark:bg-orange-950/80 border-orange-400 dark:border-orange-600 text-orange-700 dark:text-orange-300 font-bold shadow-sm'
+                                    : 'bg-[#FAFAFA] dark:bg-[#1C1C1C] border-[#E5E5E5] dark:border-[#333333] text-[#171717] dark:text-[#FAFAFA] hover:bg-orange-50/50'
                                 }`}
                                 title={`${r.count} reaction${r.count > 1 ? 's' : ''} • Click to toggle`}
                               >
@@ -608,7 +641,7 @@ export const ChatView: React.FC = () => {
 
             {/* Attachment preview bar before sending */}
             {selectedFile && (
-              <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-950/40 border-t border-indigo-200 dark:border-indigo-800 flex items-center justify-between text-xs text-indigo-700 dark:text-indigo-300">
+              <div className="px-4 py-2 bg-orange-50 dark:bg-orange-950/40 border-t border-orange-200 dark:border-orange-800 flex items-center justify-between text-xs text-orange-800 dark:text-orange-200">
                 <span className="font-semibold flex items-center gap-2">
                   <FileText className="w-4 h-4" /> Ready to upload: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
                 </span>
@@ -624,7 +657,7 @@ export const ChatView: React.FC = () => {
 
             {/* Composer Emoji Picker popover */}
             {showComposerEmojiPicker && (
-              <div className="p-2 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2">
+              <div className="p-2 bg-white dark:bg-[#141414] border-t border-[#E5E5E5] dark:border-[#333333] flex items-center gap-2">
                 {reactionEmojis.map((emoji) => (
                   <button
                     key={emoji}
@@ -633,7 +666,7 @@ export const ChatView: React.FC = () => {
                       setInputText((prev) => prev + emoji);
                       setShowComposerEmojiPicker(false);
                     }}
-                    className="p-2 text-base hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition"
+                    className="p-2 text-base hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] rounded-xl transition"
                   >
                     {emoji}
                   </button>
@@ -642,15 +675,22 @@ export const ChatView: React.FC = () => {
             )}
 
             {/* Message Input Box */}
-            <form onSubmit={handleSend} className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center gap-3">
-              <label className="p-2.5 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition">
+            <form onSubmit={handleSend} className="p-4 border-t border-[#E5E5E5] dark:border-[#333333] flex items-center gap-3">
+              <label className="p-2.5 rounded-xl text-[#737373] dark:text-[#A3A3A3] hover:text-[#F97316] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] cursor-pointer transition-colors">
                 <Paperclip className="w-5 h-5" />
                 <input
                   type="file"
                   className="hidden"
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.tsv,.md,.rtf,.zip,.tar,.gz,.7z,.rar,.json,.xml,.sql,.log,.mp3,.mp4,.wav,.webm"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {
+                      const validation = validateChatFile(file);
+                      if (!validation.valid) {
+                        addToast(validation.error || 'Invalid file format or size.', 'error');
+                        e.target.value = '';
+                        return;
+                      }
                       setSelectedFile(file);
                     }
                     e.target.value = '';
@@ -664,13 +704,13 @@ export const ChatView: React.FC = () => {
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder={`Message #${activeChannel.name}...`}
                 disabled={isSending}
-                className="flex-1 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-2.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="flex-1 bg-[#FAFAFA] dark:bg-[#1C1C1C] border border-[#E5E5E5] dark:border-[#333333] rounded-2xl px-4 py-2.5 text-xs text-[#171717] dark:text-[#FAFAFA] focus:outline-none focus:ring-2 focus:ring-[#F97316] disabled:opacity-60"
               />
 
               <button
                 type="button"
                 onClick={() => setShowComposerEmojiPicker(!showComposerEmojiPicker)}
-                className="p-2.5 rounded-xl text-slate-400 hover:text-amber-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                className="p-2.5 rounded-xl text-[#737373] dark:text-[#A3A3A3] hover:text-[#F97316] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] transition-colors"
                 title="Insert emoji"
               >
                 <Smile className="w-5 h-5" />
@@ -679,7 +719,7 @@ export const ChatView: React.FC = () => {
               <button
                 type="submit"
                 disabled={isSending || (!inputText.trim() && !selectedFile)}
-                className="p-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md shadow-indigo-600/20 active:scale-95 disabled:opacity-50 transition"
+                className="p-2.5 rounded-2xl bg-[#F97316] hover:bg-[#EA580C] dark:hover:bg-[#FB923C] text-white font-bold shadow-sm active:scale-95 disabled:opacity-50 transition"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -690,41 +730,53 @@ export const ChatView: React.FC = () => {
 
       {/* CREATE CHANNEL MODAL */}
       {isCreateChannelOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white text-sm">
-                <Hash className="w-4 h-4 text-indigo-600" />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-channel-title"
+          onClick={!isCreating ? () => setIsCreateChannelOpen(false) : undefined}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in overflow-y-auto"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md max-h-[calc(100vh-2rem)] flex flex-col bg-white dark:bg-[#141414] rounded-3xl shadow-2xl border border-[#E5E5E5] dark:border-[#333333] overflow-hidden my-auto"
+          >
+            <div className="px-6 py-4 border-b border-[#E5E5E5] dark:border-[#333333] flex items-center justify-between shrink-0">
+              <div id="create-channel-title" className="flex items-center gap-2 font-bold text-[#171717] dark:text-[#FAFAFA] text-sm">
+                <Hash className="w-4 h-4 text-[#F97316]" />
                 <span>Create New Channel</span>
               </div>
               <button
+                type="button"
                 onClick={() => setIsCreateChannelOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                disabled={isCreating}
+                aria-label="Close dialog"
+                className="p-1 rounded-lg text-[#737373] dark:text-[#A3A3A3] hover:text-[#171717] dark:hover:text-[#FAFAFA] disabled:opacity-50"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateChannelSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleCreateChannelSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-semibold text-[#171717] dark:text-[#FAFAFA] mb-1">
                   Channel Name
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-2.5 text-xs text-slate-400 font-bold">#</span>
+                  <span className="absolute left-3 top-2.5 text-xs text-[#737373] dark:text-[#A3A3A3] font-bold">#</span>
                   <input
                     type="text"
                     required
                     value={newChannelName}
                     onChange={(e) => setNewChannelName(e.target.value.toLowerCase().replace(/\s+/g, '-'))}
                     placeholder="general, dev-sync, announcements"
-                    className="w-full pl-7 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full pl-7 pr-3 py-2 rounded-xl border border-[#E5E5E5] dark:border-[#333333] bg-[#FAFAFA] dark:bg-[#1C1C1C] text-xs text-[#171717] dark:text-[#FAFAFA] focus:outline-none focus:ring-2 focus:ring-[#F97316]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-semibold text-[#171717] dark:text-[#FAFAFA] mb-1">
                   Description
                 </label>
                 <input
@@ -732,13 +784,13 @@ export const ChatView: React.FC = () => {
                   value={newChannelDesc}
                   onChange={(e) => setNewChannelDesc(e.target.value)}
                   placeholder="What is this channel for?"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-2 rounded-xl border border-[#E5E5E5] dark:border-[#333333] bg-[#FAFAFA] dark:bg-[#1C1C1C] text-xs text-[#171717] dark:text-[#FAFAFA] focus:outline-none focus:ring-2 focus:ring-[#F97316]"
                 />
               </div>
 
               {activeTeam?.subgroups && activeTeam.subgroups.length > 0 && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-[#171717] dark:text-[#FAFAFA] mb-1">
                     Channel Scope
                   </label>
                   <div className="grid grid-cols-2 gap-2">
@@ -747,8 +799,8 @@ export const ChatView: React.FC = () => {
                       onClick={() => setNewChannelType('main')}
                       className={`p-2.5 rounded-xl border text-xs font-semibold transition ${
                         newChannelType === 'main'
-                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600'
-                          : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                          ? 'border-[#F97316] bg-orange-50 dark:bg-orange-950/40 text-[#F97316]'
+                          : 'border-[#E5E5E5] dark:border-[#333333] text-[#737373] dark:text-[#A3A3A3]'
                       }`}
                     >
                       Main Team
@@ -763,8 +815,8 @@ export const ChatView: React.FC = () => {
                       }}
                       className={`p-2.5 rounded-xl border text-xs font-semibold transition ${
                         newChannelType === 'subgroup'
-                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600'
-                          : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                          ? 'border-[#F97316] bg-orange-50 dark:bg-orange-950/40 text-[#F97316]'
+                          : 'border-[#E5E5E5] dark:border-[#333333] text-[#737373] dark:text-[#A3A3A3]'
                       }`}
                     >
                       Subgroup
@@ -775,13 +827,13 @@ export const ChatView: React.FC = () => {
 
               {newChannelType === 'subgroup' && activeTeam?.subgroups && activeTeam.subgroups.length > 0 && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-[#171717] dark:text-[#FAFAFA] mb-1">
                     Select Subgroup
                   </label>
                   <select
                     value={newChannelSubgroupId}
                     onChange={(e) => setNewChannelSubgroupId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 focus:outline-none"
+                    className="w-full px-3 py-2 rounded-xl border border-[#E5E5E5] dark:border-[#333333] bg-[#FAFAFA] dark:bg-[#1C1C1C] text-xs text-[#171717] dark:text-[#FAFAFA] focus:outline-none"
                   >
                     {activeTeam.subgroups.map((sg) => (
                       <option key={sg.id} value={sg.id}>
@@ -792,18 +844,18 @@ export const ChatView: React.FC = () => {
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E5E5E5] dark:border-[#333333] shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCreateChannelOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#737373] dark:text-[#A3A3A3] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isCreating || !newChannelName.trim()}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md disabled:opacity-50"
+                  className="px-4 py-2 rounded-xl bg-[#F97316] hover:bg-[#EA580C] dark:hover:bg-[#FB923C] text-white text-xs font-bold shadow-sm disabled:opacity-50 transition-colors"
                 >
                   {isCreating ? 'Creating...' : 'Create Channel'}
                 </button>

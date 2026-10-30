@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { X, UserPlus, Loader2 } from 'lucide-react';
 import type { UserRole } from '../../types';
@@ -15,6 +15,18 @@ export const AddMemberModal: React.FC<Props> = ({ isOpen, onClose, teamId }) => 
   const [role, setRole] = useState<UserRole>('member');
   const [subgroupId, setSubgroupId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen && !isLoading) {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isLoading, onClose]);
 
   if (!isOpen) return null;
 
@@ -40,43 +52,60 @@ export const AddMemberModal: React.FC<Props> = ({ isOpen, onClose, teamId }) => 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-            <UserPlus className="w-5 h-5 text-indigo-600" />
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-member-modal-title"
+      onClick={!isLoading ? onClose : undefined}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in overflow-y-auto"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md max-h-[calc(100vh-2rem)] flex flex-col bg-white dark:bg-[#141414] rounded-3xl shadow-2xl border border-[#E5E5E5] dark:border-[#333333] overflow-hidden my-auto"
+      >
+        <div className="px-6 py-4 border-b border-[#E5E5E5] dark:border-[#333333] flex items-center justify-between shrink-0">
+          <div id="add-member-modal-title" className="flex items-center gap-2 font-bold text-[#171717] dark:text-[#FAFAFA]">
+            <UserPlus className="w-5 h-5 text-[#F97316]" />
             <span>Add Team Member</span>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isLoading}
+            aria-label="Close dialog"
+            className="p-1 rounded-lg text-[#737373] dark:text-[#A3A3A3] hover:text-[#171717] dark:hover:text-[#FAFAFA] disabled:opacity-50"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Registered Email Address
+            <label className="block text-xs font-semibold text-[#171717] dark:text-[#FAFAFA] mb-1">
+              Registered Email Address <span className="text-[#F97316]">*</span>
             </label>
             <input
               type="email"
               required
+              disabled={isLoading}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="user@example.com"
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-4 py-2.5 rounded-xl border border-[#E5E5E5] dark:border-[#333333] bg-[#FAFAFA] dark:bg-[#1C1C1C] text-[#171717] dark:text-[#FAFAFA] text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316] disabled:opacity-60"
             />
-            <p className="text-[11px] text-slate-500 mt-1">
+            <p className="text-[11px] text-[#737373] dark:text-[#A3A3A3] mt-1">
               Enter the email of an existing registered WorkNest user.
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Assigned Role</label>
+              <label className="block text-xs font-semibold text-[#171717] dark:text-[#FAFAFA] mb-1">Assigned Role</label>
               <select
+                disabled={isLoading}
                 value={role}
                 onChange={(e) => setRole(e.target.value as UserRole)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2.5 rounded-xl border border-[#E5E5E5] dark:border-[#333333] bg-[#FAFAFA] dark:bg-[#1C1C1C] text-[#171717] dark:text-[#FAFAFA] text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316] disabled:opacity-60"
               >
                 <option value="member">Member</option>
                 <option value="subgroup_leader">Sub-Group Leader</option>
@@ -85,11 +114,12 @@ export const AddMemberModal: React.FC<Props> = ({ isOpen, onClose, teamId }) => 
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Subgroup</label>
+              <label className="block text-xs font-semibold text-[#171717] dark:text-[#FAFAFA] mb-1">Subgroup</label>
               <select
+                disabled={isLoading}
                 value={subgroupId}
                 onChange={(e) => setSubgroupId(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2.5 rounded-xl border border-[#E5E5E5] dark:border-[#333333] bg-[#FAFAFA] dark:bg-[#1C1C1C] text-[#171717] dark:text-[#FAFAFA] text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316] disabled:opacity-60"
               >
                 <option value="">None (General Team)</option>
                 {activeTeam?.subgroups.map((sg) => (
@@ -101,18 +131,19 @@ export const AddMemberModal: React.FC<Props> = ({ isOpen, onClose, teamId }) => 
             </div>
           </div>
 
-          <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-200 dark:border-slate-800">
+          <div className="pt-4 flex items-center justify-end gap-3 border-t border-[#E5E5E5] dark:border-[#333333] shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              disabled={isLoading}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-[#737373] dark:text-[#A3A3A3] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isLoading}
-              className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-600/30 flex items-center gap-2 transition disabled:opacity-50"
+              className="px-5 py-2 rounded-xl bg-[#F97316] hover:bg-[#EA580C] dark:hover:bg-[#FB923C] text-white font-bold text-xs shadow-sm flex items-center gap-2 transition disabled:opacity-50"
             >
               {isLoading ? (
                 <>

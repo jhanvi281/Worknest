@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   LayoutDashboard,
@@ -30,6 +30,18 @@ export const Sidebar: React.FC = () => {
 
   const [isCollapsed, setIsCollapsed] = useState(false);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isMobileSidebarOpen) {
+        setIsMobileSidebarOpen(false);
+      }
+    };
+    if (isMobileSidebarOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMobileSidebarOpen, setIsMobileSidebarOpen]);
+
   const unreadNotifs = notifications.filter((n) => !n.isRead).length;
 
   const navItems: { view: AppView; label: string; icon: React.ReactNode; badge?: number }[] = [
@@ -40,7 +52,7 @@ export const Sidebar: React.FC = () => {
     { view: 'chat', label: 'Chat', icon: <MessageSquare className="w-5 h-5" /> },
     { view: 'files', label: 'Files', icon: <FileText className="w-5 h-5" /> },
     { view: 'meetings', label: 'Meetings', icon: <Video className="w-5 h-5" /> },
-    { view: 'ai_assistant', label: 'AI Assistant', icon: <Sparkles className="w-5 h-5 text-indigo-400" /> },
+    { view: 'ai_assistant', label: 'AI Assistant', icon: <Sparkles className="w-5 h-5 text-orange-500" /> },
   ];
 
   const bottomItems: { view: AppView; label: string; icon: React.ReactNode; badge?: number }[] = [
@@ -54,20 +66,20 @@ export const Sidebar: React.FC = () => {
   };
 
   const sidebarContent = (
-    <div className="flex flex-col h-full bg-slate-900 text-slate-200 border-r border-slate-800 select-none">
+    <div className="flex flex-col h-full bg-white dark:bg-[#141414] text-[#171717] dark:text-[#FAFAFA] border-r border-[#E5E5E5] dark:border-[#333333] transition-colors select-none">
       {/* Brand Header */}
-      <div className="h-16 px-4 flex items-center justify-between border-b border-slate-800/80">
+      <div className="h-16 px-4 flex items-center justify-between border-b border-[#E5E5E5] dark:border-[#333333]">
         <div
           onClick={() => handleNavClick('dashboard')}
           className="flex items-center gap-3 cursor-pointer group"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-cyan-400 flex items-center justify-center text-white shadow-lg shadow-indigo-500/25 group-hover:scale-105 transition-transform shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-[#F97316] flex items-center justify-center text-white shadow-sm shrink-0">
             <Layers className="w-5 h-5" />
           </div>
           {(!isCollapsed || isMobileSidebarOpen) && (
             <div className="animate-fade-in">
-              <span className="text-lg font-bold tracking-tight text-white">WorkNest</span>
-              <span className="block text-[10px] text-slate-400 font-medium tracking-wide">Enterprise SaaS</span>
+              <span className="text-lg font-bold tracking-tight text-[#171717] dark:text-[#FAFAFA]">WorkNest</span>
+              <span className="block text-[10px] text-[#737373] dark:text-[#A3A3A3] font-medium tracking-wide">Enterprise SaaS</span>
             </div>
           )}
         </div>
@@ -75,8 +87,10 @@ export const Sidebar: React.FC = () => {
         {/* Mobile close button */}
         {isMobileSidebarOpen && (
           <button
+            type="button"
             onClick={() => setIsMobileSidebarOpen(false)}
-            className="md:hidden p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
+            aria-label="Close navigation menu"
+            className="md:hidden p-1.5 rounded-xl text-[#737373] dark:text-[#A3A3A3] hover:text-[#171717] dark:hover:text-[#FAFAFA] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C]"
           >
             <X className="w-5 h-5" />
           </button>
@@ -85,8 +99,10 @@ export const Sidebar: React.FC = () => {
         {/* Desktop collapse toggle */}
         {!isMobileSidebarOpen && (
           <button
+            type="button"
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden md:flex p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="hidden md:flex p-1.5 rounded-xl text-[#737373] dark:text-[#A3A3A3] hover:text-[#171717] dark:hover:text-[#FAFAFA] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] transition"
           >
             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
@@ -103,8 +119,8 @@ export const Sidebar: React.FC = () => {
               onClick={() => handleNavClick(item.view)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                 isActive
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+                  ? 'bg-[#F97316] text-white shadow-sm'
+                  : 'text-[#737373] dark:text-[#A3A3A3] hover:text-[#171717] dark:hover:text-[#FAFAFA] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C]'
               }`}
               title={isCollapsed ? item.label : undefined}
             >
@@ -116,7 +132,7 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       {/* Bottom Nav Items & User Profile */}
-      <div className="p-3 border-t border-slate-800/80 space-y-1.5">
+      <div className="p-3 border-t border-[#E5E5E5] dark:border-[#333333] space-y-1.5">
         {bottomItems.map((item) => {
           const isActive = currentView === item.view;
           return (
@@ -125,8 +141,8 @@ export const Sidebar: React.FC = () => {
               onClick={() => handleNavClick(item.view)}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                 isActive
-                  ? 'bg-slate-800 text-white'
-                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/50'
+                  ? 'bg-orange-50 dark:bg-orange-950/40 text-[#F97316] font-semibold'
+                  : 'text-[#737373] dark:text-[#A3A3A3] hover:text-[#171717] dark:hover:text-[#FAFAFA] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C]'
               }`}
             >
               <div className="flex items-center gap-3">
@@ -134,7 +150,7 @@ export const Sidebar: React.FC = () => {
                 {(!isCollapsed || isMobileSidebarOpen) && <span>{item.label}</span>}
               </div>
               {item.badge && item.badge > 0 && (!isCollapsed || isMobileSidebarOpen) && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#F97316] text-white">
                   {item.badge}
                 </span>
               )}
@@ -145,17 +161,17 @@ export const Sidebar: React.FC = () => {
         {/* User Card */}
         <div
           onClick={() => handleNavClick('profile')}
-          className="mt-3 pt-3 border-t border-slate-800 flex items-center gap-3 p-2 rounded-xl hover:bg-slate-800/70 cursor-pointer transition"
+          className="mt-3 pt-3 border-t border-[#E5E5E5] dark:border-[#333333] flex items-center gap-3 p-2 rounded-xl hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] cursor-pointer transition"
         >
           <img
-            src={user?.avatar || 'https://ui-avatars.com/api/?name=User&background=6366f1&color=fff'}
+            src={user?.avatar || 'https://ui-avatars.com/api/?name=User&background=f97316&color=fff'}
             alt={user?.name || 'User'}
-            className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-indigo-500/40"
+            className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-orange-500/30"
           />
           {(!isCollapsed || isMobileSidebarOpen) && (
             <div className="overflow-hidden">
-              <div className="text-xs font-bold text-white truncate">{user?.name || 'User'}</div>
-              <div className="text-[10px] text-indigo-400 font-medium truncate capitalize">
+              <div className="text-xs font-bold text-[#171717] dark:text-[#FAFAFA] truncate">{user?.name || 'User'}</div>
+              <div className="text-[10px] text-[#F97316] font-medium truncate capitalize">
                 {user?.role ? user.role.replace('_', ' ') : 'member'}
               </div>
             </div>
@@ -178,10 +194,16 @@ export const Sidebar: React.FC = () => {
 
       {/* Mobile Drawer Sidebar */}
       {isMobileSidebarOpen && (
-        <div className="fixed inset-0 z-50 md:hidden flex">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation menu"
+          className="fixed inset-0 z-50 md:hidden flex"
+        >
           <div
             onClick={() => setIsMobileSidebarOpen(false)}
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
+            aria-hidden="true"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
           />
           <aside className="relative w-72 h-full z-10 animate-fade-in">{sidebarContent}</aside>
         </div>

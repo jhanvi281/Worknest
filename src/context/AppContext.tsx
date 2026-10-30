@@ -1,8 +1,15 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { useUser, useClerk, useAuth } from '@clerk/clerk-react';
+import { supabase, setClerkTokenGetter, isClerkAuthMode } from '../lib/supabase';
+import { isValidUuid } from '../lib/clerkUtils';
 import { taskService } from '../services/taskService';
 import { dailyLogService } from '../services/dailyLogService';
 import { chatService } from '../services/chatService';
+import { fileService } from '../services/fileService';
+import { notificationService } from '../services/notificationService';
+import { meetingService, type CreateMeetingParams } from '../services/meetingService';
+import { aiService } from '../services/aiService';
+import { actionValidationService } from '../services/actionValidationService';
 import type {
   AppView,
   UserRole,
@@ -15,8 +22,11 @@ import type {
   ChatMessage,
   ChatChannel,
   ProjectFile,
+  FileCategory,
   Meeting,
   AIMessage,
+  AIAction,
+  AIStage,
   NotificationItem,
   ToastAlert,
 } from '../types';
@@ -35,6 +45,7 @@ interface AppContextType {
   user: UserProfile | null;
   isLoadingUser: boolean;
   userError: string | null;
+  retryProfileSync: () => Promise<void>;
   signOut: () => Promise<void>;
   updateUserProfile: (name: string, email: string, department: string) => Promise<boolean>;
 
@@ -65,6 +76,7 @@ interface AppContextType {
   isLoadingDailyLogs: boolean;
   dailyLogsError: string | null;
   addDailyLog: (log: Omit<DailyLog, 'id' | 'userId' | 'userName' | 'userAvatar' | 'status'>) => Promise<boolean>;
+  deleteDailyLog: (id: string) => Promise<boolean>;
   refreshDailyLogs: () => Promise<void>;
 
   // Chat
@@ -81,6 +93,7 @@ interface AppContextType {
   deleteMessage: (messageId: string) => Promise<boolean>;
   toggleReaction: (messageId: string, emoji: string) => Promise<boolean>;
   uploadChatAttachment: (file: File) => Promise<{ name: string; size: string; type: string; url?: string; path?: string } | null>;
+  downloadChatAttachment: (att: { name: string; url?: string; path?: string }) => Promise<void>;
   createChannel: (channel: { name: string; description?: string; isSubgroup?: boolean; subgroupId?: string }) => Promise<boolean>;
   refreshChannels: () => Promise<void>;
   refreshMessages: (channelId?: string) => Promise<void>;
@@ -88,23 +101,51 @@ interface AppContextType {
 
   // Files
   files: ProjectFile[];
+  isLoadingFiles: boolean;
+  filesError: string | null;
+  refreshFiles: (teamId?: string) => Promise<void>;
+  uploadFile: (
+    file: File,
+    options?: { teamId?: string; customName?: string; category?: FileCategory }
+  ) => Promise<ProjectFile | null>;
   addFile: (file: Omit<ProjectFile, 'id' | 'uploadedBy' | 'uploaderAvatar' | 'date'>) => void;
-  deleteFile: (id: string) => void;
+  deleteFile: (id: string) => Promise<boolean>;
+  downloadFile: (file: ProjectFile) => Promise<void>;
+  getFilePreviewUrl: (file: ProjectFile) => Promise<string | null>;
 
   // Meetings & Video Call
   meetings: Meeting[];
+  isLoadingMeetings: boolean;
+  meetingsError: string | null;
+  refreshMeetings: () => Promise<void>;
+  createMeeting: (params: CreateMeetingParams) => Promise<Meeting | null>;
+  cancelMeeting: (meetingId: string) => Promise<boolean>;
   addMeeting: (meeting: Omit<Meeting, 'id'>) => void;
   activeVideoMeeting: Meeting | null;
   setActiveVideoMeeting: (meeting: Meeting | null) => void;
 
   // AI Assistant
   aiMessages: AIMessage[];
-  sendAIMessage: (text: string) => void;
+  isAITyping: boolean;
+  aiStage: AIStage;
+  aiError: string | null;
+  sendAIMessage: (text: string) => Promise<boolean>;
+  cancelAIMessage: () => void;
+  clearAIMessages: () => void;
+  retryLastAIMessage: () => Promise<boolean>;
+  executeAIAction: (actionId: string, overrides?: Record<string, any>) => Promise<boolean>;
+  cancelAIAction: (actionId: string) => void;
+  updateAIActionParams: (actionId: string, newParams: Record<string, any>) => void;
 
   // Notifications
   notifications: NotificationItem[];
-  markNotificationAsRead: (id: string) => void;
-  markAllNotificationsAsRead: () => void;
+  isLoadingNotifications: boolean;
+  notificationsError: string | null;
+  unreadNotificationsCount: number;
+  refreshNotifications: () => Promise<void>;
+  markNotificationAsRead: (id: string) => Promise<boolean>;
+  markAllNotificationsAsRead: () => Promise<boolean>;
+  deleteNotification: (id: string) => Promise<boolean>;
 
   // Search & Modals
   isSearchOpen: boolean;
@@ -127,176 +168,59 @@ interface AppContextType {
 
 
 
-const initialFiles: ProjectFile[] = [
-  {
-    id: 'file-1',
-    name: 'WorkNest_Q4_Product_Architecture.pptx',
-    type: 'PPTX',
-    category: 'presentations',
-    uploadedBy: 'Alex Morgan',
-    uploaderAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-    date: '2026-08-12',
-    size: '14.2 MB',
-  },
-  {
-    id: 'file-2',
-    name: 'API_Integration_Endpoints_v2.pdf',
-    type: 'PDF',
-    category: 'documents',
-    uploadedBy: 'David Chen',
-    uploaderAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    date: '2026-08-11',
-    size: '4.8 MB',
-  },
-  {
-    id: 'file-3',
-    name: 'UI_Component_Library_Specs.docx',
-    type: 'DOCX',
-    category: 'documents',
-    uploadedBy: 'Sarah Jenkins',
-    uploaderAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-    date: '2026-08-10',
-    size: '2.1 MB',
-  },
-  {
-    id: 'file-4',
-    name: 'Q3_Performance_Analytics.xlsx',
-    type: 'XLSX',
-    category: 'other',
-    uploadedBy: 'Marcus Vance',
-    uploaderAvatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80',
-    date: '2026-08-08',
-    size: '1.9 MB',
-  },
-  {
-    id: 'file-5',
-    name: 'WorkNest_Brand_Identity_Assets.png',
-    type: 'PNG',
-    category: 'images',
-    uploadedBy: 'Sarah Jenkins',
-    uploaderAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-    date: '2026-08-05',
-    size: '8.4 MB',
-  },
-];
 
-const initialMeetings: Meeting[] = [
-  {
-    id: 'mtg-1',
-    title: 'Weekly Product & Engineering Sync',
-    date: 'Today',
-    time: '10:00 AM',
-    duration: '45 mins',
-    participants: [
-      { name: 'Alex Morgan', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80' },
-      { name: 'David Chen', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80' },
-      { name: 'Sarah Jenkins', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80' },
-      { name: 'Michael Vance', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80' },
-    ],
-    organizer: 'Alex Morgan',
-    type: 'Video Conference',
-    description: 'Review milestone progress, OAuth 2.0 release, and subgroup work allocation for upcoming launch.',
-  },
-  {
-    id: 'mtg-2',
-    title: 'Subgroup Design Review: Glassmorphism UI',
-    date: 'Tomorrow',
-    time: '02:00 PM',
-    duration: '30 mins',
-    participants: [
-      { name: 'Sarah Jenkins', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80' },
-      { name: 'Alex Morgan', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80' },
-    ],
-    organizer: 'Sarah Jenkins',
-    type: 'Subgroup Sync',
-    description: 'Walkthrough updated color tokens, dark mode UI states, and mobile accessibility.',
-  },
-  {
-    id: 'mtg-3',
-    title: 'WorkNest AI Engine Task Scheduling Deep Dive',
-    date: 'Aug 18, 2026',
-    time: '11:30 AM',
-    duration: '60 mins',
-    participants: [
-      { name: 'Elena Rostova', avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80' },
-      { name: 'Marcus Vance', avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80' },
-      { name: 'Alex Morgan', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80' },
-    ],
-    organizer: 'Elena Rostova',
-    type: 'Project Standup',
-    description: 'Evaluate neural network predictive scoring on team task completion velocity.',
-  },
-];
 
-const initialAIMessages: AIMessage[] = [
-  {
-    id: 'aimsg-1',
-    sender: 'ai',
-    text: 'Hello Alex! I am WorkNest AI, your intelligent project assistant. I have analyzed your workspace and team activity for today.',
-    timestamp: '09:00 AM',
-    insights: [
-      {
-        title: 'Project Health Rating: 94%',
-        description: 'Core SaaS Engineering team velocity is strong. 78% of milestone deliverables are completed ahead of schedule.',
-        type: 'success',
-      },
-      {
-        title: 'Deadline Attention Required',
-        description: 'Task "Implement OAuth 2.0 & Role-Based Access Control" is marked Urgent and due in 5 days.',
-        type: 'warning',
-      },
-    ],
-  },
-];
 
-const initialNotifications: NotificationItem[] = [
-  {
-    id: 'notif-1',
-    title: 'New Task Assigned',
-    message: 'David Chen assigned you to "Optimize Audio Waveform Streaming for Meetings".',
-    timestamp: '10 min ago',
-    isRead: false,
-    category: 'task',
-    linkView: 'my_tasks',
-  },
-  {
-    id: 'notif-2',
-    title: 'Daily Work Log Reminder',
-    message: 'Today\'s work log submission is now open for your Development subgroup.',
-    timestamp: '1 hour ago',
-    isRead: false,
-    category: 'system',
-    linkView: 'daily_logs',
-  },
-  {
-    id: 'notif-3',
-    title: 'WorkNest AI Alert',
-    message: 'WorkNest AI detected 2 high-priority tasks approaching deadline next week.',
-    timestamp: '3 hours ago',
-    isRead: true,
-    category: 'ai',
-    linkView: 'ai_assistant',
-  },
-  {
-    id: 'notif-4',
-    title: 'File Uploaded',
-    message: 'Alex Morgan uploaded "WorkNest_Q4_Product_Architecture.pptx".',
-    timestamp: 'Yesterday',
-    isRead: true,
-    category: 'file',
-    linkView: 'files',
-  },
-];
+
+const loadInitialAIMessages = (): AIMessage[] => {
+  try {
+    const saved = sessionStorage.getItem('worknest_ai_messages');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // Ignore sessionStorage parse errors
+  }
+  return [];
+};
+
+
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const PUBLIC_VIEWS: AppView[] = ['landing', 'login', 'signup', 'forgot_password'];
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Clerk Authentication hooks
+  const { user: clerkUser, isLoaded: isClerkLoaded, isSignedIn: isClerkSignedIn } = useUser();
+  const { getToken } = useAuth();
+  const clerk = useClerk();
+
+  // Register dynamic token getter for Supabase client (Clerk native 3rd-party auth)
+  useEffect(() => {
+    if (getToken) {
+      setClerkTokenGetter(async () => {
+        try {
+          return await getToken();
+        } catch (err) {
+          console.error('Error retrieving Clerk session token for Supabase client:', err);
+          return null;
+        }
+      });
+    }
+  }, [getToken]);
   const [currentView, setCurrentViewState] = useState<AppView>(() => {
-    const saved = localStorage.getItem('worknest_current_view');
-    if (saved && !PUBLIC_VIEWS.includes(saved as AppView)) {
-      return saved as AppView;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlView = params.get('view');
+      if (urlView) return urlView as AppView;
+      const saved = localStorage.getItem('worknest_current_view');
+      if (saved && !PUBLIC_VIEWS.includes(saved as AppView)) {
+        return saved as AppView;
+      }
+    } catch {
+      // Ignore URL/localStorage parse errors
     }
     return 'landing';
   });
@@ -311,10 +235,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const [currentRole, setCurrentRole] = useState<UserRole>('group_leader');
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlTheme = params.get('theme');
+      if (urlTheme === 'dark') return true;
+      if (urlTheme === 'light') return false;
+      const saved = localStorage.getItem('worknest_theme');
+      if (saved) return saved === 'dark';
+      return typeof window !== 'undefined' && window.matchMedia
+        ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        : false;
+    } catch {
+      return false;
+    }
+  });
   const [activeTeamId, setActiveTeamIdState] = useState<string>(() => {
     return localStorage.getItem('worknest_active_team_id') || '';
   });
+
+  // Clean up transient deep-link/testing parameters from URL so normal navigation & refresh use saved preferences
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.location.search) {
+        const params = new URLSearchParams(window.location.search);
+        let hasCustomParams = false;
+        if (params.has('theme')) {
+          params.delete('theme');
+          hasCustomParams = true;
+        }
+        if (params.has('view')) {
+          params.delete('view');
+          hasCustomParams = true;
+        }
+        if (params.has('modal')) {
+          params.delete('modal');
+          hasCustomParams = true;
+        }
+        if (hasCustomParams) {
+          const remaining = params.toString();
+          const cleanUrl = window.location.pathname + (remaining ? '?' + remaining : '') + window.location.hash;
+          window.history.replaceState({}, '', cleanUrl);
+        }
+      }
+    } catch {
+      // Ignore history manipulation errors
+    }
+  }, []);
 
   const setActiveTeamId = (id: string) => {
     setActiveTeamIdState(id);
@@ -324,6 +291,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoadingUser, setIsLoadingUser] = useState<boolean>(true);
   const [userError, setUserError] = useState<string | null>(null);
+  const lastLoadedUserIdRef = useRef<string | null>(null);
 
   // Real Supabase Teams & Subgroups State
   const [teams, setTeams] = useState<Team[]>([]);
@@ -356,21 +324,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isLoadingMessages, setIsLoadingMessages] = useState<boolean>(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(1);
-  const [files, setFiles] = useState<ProjectFile[]>(initialFiles);
-  const [meetings, setMeetings] = useState<Meeting[]>(initialMeetings);
+  const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [isLoadingFiles, setIsLoadingFiles] = useState<boolean>(false);
+  const [filesError, setFilesError] = useState<string | null>(null);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [isLoadingMeetings, setIsLoadingMeetings] = useState<boolean>(false);
+  const [meetingsError, setMeetingsError] = useState<string | null>(null);
   const [activeVideoMeeting, setActiveVideoMeeting] = useState<Meeting | null>(null);
-  const [aiMessages, setAiMessages] = useState<AIMessage[]>(initialAIMessages);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(initialNotifications);
+  const [aiMessages, setAiMessages] = useState<AIMessage[]>(loadInitialAIMessages);
+  const [isAITyping, setIsAITyping] = useState<boolean>(false);
+  const [aiStage, setAiStage] = useState<AIStage>('idle');
+  const [aiError, setAiError] = useState<string | null>(null);
+  const isSendingAIMessageRef = useRef<boolean>(false);
+  const aiAbortControllerRef = useRef<AbortController | null>(null);
 
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [createModalType, setCreateModalType] = useState<'task' | 'team' | 'meeting' | 'file' | null>(null);
+  useEffect(() => {
+    try {
+      if (aiMessages.length === 0) {
+        sessionStorage.removeItem('worknest_ai_messages');
+      } else {
+        sessionStorage.setItem('worknest_ai_messages', JSON.stringify(aiMessages));
+      }
+    } catch {
+      // Ignore sessionStorage quota/serialization errors
+    }
+  }, [aiMessages]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState<boolean>(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
+
+  const [isSearchOpen, setIsSearchOpen] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('modal') === 'search';
+    } catch {
+      return false;
+    }
+  });
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(() => {
+    try {
+      const m = new URLSearchParams(window.location.search).get('modal');
+      return ['task', 'team', 'meeting', 'file'].includes(m || '');
+    } catch {
+      return false;
+    }
+  });
+  const [createModalType, setCreateModalType] = useState<'task' | 'team' | 'meeting' | 'file' | null>(() => {
+    try {
+      const m = new URLSearchParams(window.location.search).get('modal');
+      if (m && ['task', 'team', 'meeting', 'file'].includes(m)) {
+        return m as any;
+      }
+    } catch {}
+    return null;
+  });
   const [toasts, setToasts] = useState<ToastAlert[]>([]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Fetch real tasks from Supabase
-  const fetchTasks = async (userId: string) => {
-    setIsLoadingTasks(true);
+  const fetchTasks = async (userId: string, showLoading: boolean = true) => {
+    if (!userId || !isValidUuid(userId)) {
+      setTasks([]);
+      if (showLoading) setIsLoadingTasks(false);
+      return;
+    }
+    if (showLoading) setIsLoadingTasks(true);
     setTasksError(null);
     try {
       const fetchedTasks = await taskService.fetchUserTasks(userId);
@@ -380,13 +398,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const msg = err instanceof Error ? err.message : 'Failed to load tasks.';
       setTasksError(msg);
     } finally {
-      setIsLoadingTasks(false);
+      if (showLoading) setIsLoadingTasks(false);
     }
   };
 
   // Fetch real daily logs from Supabase
-  const fetchDailyLogs = async (userId: string) => {
-    setIsLoadingDailyLogs(true);
+  const fetchDailyLogs = async (userId: string, showLoading: boolean = true) => {
+    if (!userId || !isValidUuid(userId)) {
+      setDailyLogs([]);
+      if (showLoading) setIsLoadingDailyLogs(false);
+      return;
+    }
+    if (showLoading) setIsLoadingDailyLogs(true);
     setDailyLogsError(null);
     try {
       const fetchedLogs = await dailyLogService.fetchUserDailyLogs(userId);
@@ -396,7 +419,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const msg = err instanceof Error ? err.message : 'Failed to load daily logs.';
       setDailyLogsError(msg);
     } finally {
-      setIsLoadingDailyLogs(false);
+      if (showLoading) setIsLoadingDailyLogs(false);
     }
   };
 
@@ -411,6 +434,106 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await fetchDailyLogs(user.id);
     }
   };
+
+  // Fetch real project files from Supabase
+  const fetchFiles = async (teamId?: string, showLoading: boolean = true) => {
+    if (showLoading) setIsLoadingFiles(true);
+    setFilesError(null);
+    try {
+      const loadedFiles = await fileService.fetchFiles({ teamId });
+      setFiles(loadedFiles);
+    } catch (err: unknown) {
+      console.error('Error loading files from Supabase:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to load project files.';
+      setFilesError(msg);
+    } finally {
+      if (showLoading) setIsLoadingFiles(false);
+    }
+  };
+
+  const refreshFiles = async (teamId?: string) => {
+    await fetchFiles(teamId);
+  };
+
+  // Fetch real notifications from Supabase
+  const fetchNotifications = async (showLoading: boolean = true) => {
+    if (showLoading) setIsLoadingNotifications(true);
+    setNotificationsError(null);
+    try {
+      const loaded = await notificationService.fetchNotifications();
+      setNotifications(loaded);
+    } catch (err: unknown) {
+      console.error('Error loading notifications from Supabase:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to load notifications.';
+      setNotificationsError(msg);
+    } finally {
+      if (showLoading) setIsLoadingNotifications(false);
+    }
+  };
+
+  const refreshNotifications = async () => {
+    await fetchNotifications();
+  };
+
+  // Realtime subscription for notifications
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const unsubscribe = notificationService.subscribeToNotifications(user.id, {
+      onInsert: (newNotif) => {
+        setNotifications((prev) => {
+          if (prev.some((n) => n.id === newNotif.id)) return prev;
+          return [newNotif, ...prev];
+        });
+        addToast(newNotif.title, 'info');
+      },
+      onUpdate: (updatedNotif) => {
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === updatedNotif.id ? updatedNotif : n))
+        );
+      },
+      onDelete: (deletedId) => {
+        setNotifications((prev) => prev.filter((n) => n.id !== deletedId));
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [user?.id]);
+
+  // Fetch real persistent meetings from Supabase
+  const fetchMeetings = async (showLoading: boolean = true) => {
+    if (showLoading) setIsLoadingMeetings(true);
+    setMeetingsError(null);
+    try {
+      const loaded = await meetingService.fetchUserMeetings();
+      setMeetings(loaded);
+    } catch (err: unknown) {
+      console.error('Error loading meetings from Supabase:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to load meetings.';
+      setMeetingsError(msg);
+    } finally {
+      if (showLoading) setIsLoadingMeetings(false);
+    }
+  };
+
+  const refreshMeetings = async () => {
+    await fetchMeetings();
+  };
+
+  // Realtime subscription for meetings
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const unsubscribe = meetingService.subscribeToMeetings(() => {
+      fetchMeetings();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [user?.id]);
 
   // Fetch real chat channels from Supabase
   const fetchChannels = async (teamId?: string) => {
@@ -472,8 +595,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Fetch real teams from Supabase for a given user ID
-  const fetchTeams = async (userId: string) => {
-    setIsLoadingTeams(true);
+  const fetchTeams = async (userId: string, showLoading: boolean = true) => {
+    if (!userId || !isValidUuid(userId)) {
+      setTeams([]);
+      if (showLoading) setIsLoadingTeams(false);
+      return;
+    }
+    if (showLoading) setIsLoadingTeams(true);
     setTeamsError(null);
     try {
       // 1. Query team_members for the authenticated user to get teams they belong to
@@ -499,13 +627,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.error('Error fetching user teams from team_members:', memberErr);
         setTeamsError(memberErr.message);
         setTeams([]);
-        setIsLoadingTeams(false);
+        if (showLoading) setIsLoadingTeams(false);
         return;
       }
 
       if (!memberRows || memberRows.length === 0) {
         setTeams([]);
-        setIsLoadingTeams(false);
+        if (showLoading) setIsLoadingTeams(false);
         return;
       }
 
@@ -563,7 +691,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const profile = m.profiles || {};
             const name = profile.full_name || profile.email?.split('@')[0] || 'Member';
             const email = profile.email || '';
-            const avatar = profile.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=6366f1&color=fff`;
+            const avatar = profile.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f97316&color=fff`;
             
             const assignedSg = rawSubgroups.find((sg: any) => sg.id === m.subgroup_id);
             const roleLabels: Record<UserRole, string> = {
@@ -574,7 +702,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             };
 
             return {
-              id: m.user_id,
+              id: m.id,
               memberId: m.id,
               userId: m.user_id,
               name,
@@ -646,7 +774,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const msg = err instanceof Error ? err.message : 'Failed to load teams.';
       setTeamsError(msg);
     } finally {
-      setIsLoadingTeams(false);
+      if (showLoading) setIsLoadingTeams(false);
     }
   };
 
@@ -665,9 +793,156 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Load the currently authenticated Supabase user & profile
-  const loadAuthenticatedUser = async (explicitAuthUser?: any) => {
-    setIsLoadingUser(true);
+  // Synchronize Clerk user identity to Supabase PostgreSQL and resolve canonical UUID
+  const syncAndLoadClerkUser = async (cUser: NonNullable<typeof clerkUser>, isInitial: boolean = false) => {
+    if (!cUser) return;
+    if (isInitial && !user) {
+      setIsLoadingUser(true);
+    }
+    setUserError(null);
+
+    try {
+      const primaryEmail =
+        cUser.primaryEmailAddress?.emailAddress ||
+        cUser.emailAddresses?.[0]?.emailAddress ||
+        '';
+      const fullName =
+        cUser.fullName ||
+        [cUser.firstName, cUser.lastName].filter(Boolean).join(' ') ||
+        cUser.username ||
+        primaryEmail.split('@')[0] ||
+        'User';
+      const avatarUrl =
+        cUser.imageUrl ||
+        `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=f97316&color=fff`;
+
+      // 1. Call secure JIT sync RPC to map Clerk User ID to canonical UUID profile in public.profiles
+      let canonicalUuid: string | null = null;
+      let syncErrorMsg: string | null = null;
+
+      try {
+        const { data, error } = await supabase.rpc('sync_clerk_profile', {
+          p_clerk_user_id: cUser.id,
+          p_email: primaryEmail,
+          p_full_name: fullName,
+          p_avatar_url: avatarUrl,
+        });
+
+        if (!error && data && isValidUuid(data)) {
+          canonicalUuid = data;
+        } else if (error) {
+          syncErrorMsg = error.message;
+          console.warn('[WorkNest Auth] sync_clerk_profile RPC notice:', error.message);
+        }
+      } catch (rpcErr) {
+        syncErrorMsg = rpcErr instanceof Error ? rpcErr.message : String(rpcErr);
+        console.warn('[WorkNest Auth] RPC invocation exception:', rpcErr);
+      }
+
+      // 2. Query trusted public.profiles by canonical UUID or clerk_user_id
+      let profileData: { id: string; full_name?: string; email?: string; avatar_url?: string; department?: string } | null = null;
+
+      if (canonicalUuid) {
+        const { data, error: profileErr } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, avatar_url, department')
+          .eq('id', canonicalUuid)
+          .maybeSingle();
+
+        if (!profileErr && data && isValidUuid(data.id)) {
+          profileData = data;
+        }
+      }
+
+      // Secondary lookup: If RPC returned error or timed out, check if trusted mapping was previously established
+      if (!profileData) {
+        const { data, error: byClerkErr } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, avatar_url, department')
+          .eq('clerk_user_id', cUser.id)
+          .maybeSingle();
+
+        if (!byClerkErr && data && isValidUuid(data.id)) {
+          profileData = data;
+          canonicalUuid = data.id;
+        }
+      }
+
+      // 3. STRICT IDENTITY VERIFICATION:
+      // If provisioning failed to resolve a canonical UUID from public.profiles.id,
+      // fail safely with a recoverable synchronization error.
+      // NEVER silently substitute Clerk IDs (user_...) or independently generated UUIDs.
+      if (!profileData || !canonicalUuid) {
+        lastLoadedUserIdRef.current = null;
+        setUser(null);
+        const detailedError = syncErrorMsg
+          ? `Workspace profile synchronization error: ${syncErrorMsg}`
+          : 'Unable to resolve your canonical workspace profile from the database. Please ensure the Clerk database migration has been applied and your session is active.';
+        setUserError(detailedError);
+        setIsLoadingUser(false);
+        return;
+      }
+
+      const canonicalId = profileData.id;
+      const name = profileData.full_name || fullName;
+      const email = profileData.email || primaryEmail;
+      const avatar = profileData.avatar_url || avatarUrl;
+      const department = profileData.department || 'General';
+
+      lastLoadedUserIdRef.current = canonicalId;
+      setUserError(null);
+
+      setUser({
+        id: canonicalId,
+        name,
+        email,
+        avatar,
+        role: currentRole,
+        department,
+      });
+
+      // 4. Load all associated private workspace data ONLY AFTER canonical identity is confirmed
+      fetchTeams(canonicalId, isInitial);
+      fetchTasks(canonicalId, isInitial);
+      fetchDailyLogs(canonicalId, isInitial);
+      fetchFiles(undefined, isInitial);
+      fetchNotifications(isInitial);
+      fetchMeetings(isInitial);
+
+      // On successful auth restoration, transition away from public auth entry views to dashboard or saved view
+      setCurrentViewState((prev) => {
+        if (PUBLIC_VIEWS.includes(prev)) {
+          const savedView = localStorage.getItem('worknest_current_view') as AppView | null;
+          return savedView && !PUBLIC_VIEWS.includes(savedView) ? savedView : 'dashboard';
+        }
+        return prev;
+      });
+    } catch (err: unknown) {
+      console.error('[WorkNest Auth] Unexpected error loading Clerk user profile:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to load user information.';
+      lastLoadedUserIdRef.current = null;
+      setUser(null);
+      setUserError(`Workspace profile synchronization error: ${msg}`);
+    } finally {
+      setIsLoadingUser(false);
+    }
+  };
+
+  // Legacy Supabase user loading fallback during migration
+  const loadLegacySupabaseUser = async (explicitAuthUser?: any, isInitial: boolean = false) => {
+    if (isClerkAuthMode) {
+      // In Clerk auth mode, if user is not authenticated via Clerk, they are an unauthenticated visitor
+      lastLoadedUserIdRef.current = null;
+      setUser(null);
+      setTeams([]);
+      setIsLoadingUser(false);
+      setIsLoadingTeams(false);
+      return;
+    }
+
+    if (isInitial && !user) {
+      setIsLoadingUser(true);
+    }
     setUserError(null);
     let authUser = explicitAuthUser;
     try {
@@ -684,12 +959,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       if (!authUser) {
+        lastLoadedUserIdRef.current = null;
         setUser(null);
         setTeams([]);
         setIsLoadingUser(false);
         setIsLoadingTeams(false);
         return;
       }
+
+      lastLoadedUserIdRef.current = authUser.id;
+      const shouldShowLoading = isInitial && !user;
 
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
@@ -700,12 +979,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (profileError) {
         console.error('Failed to load profile from public.profiles:', profileError);
         setUserError(`Failed to load user profile: ${profileError.message}`);
-        
+
         const fallbackName =
           authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User';
         const fallbackAvatar =
           authUser.user_metadata?.avatar_url ||
-          `https://ui-avatars.com/api/?name=${encodeURIComponent(fallbackName)}&background=6366f1&color=fff`;
+          `https://ui-avatars.com/api/?name=${encodeURIComponent(fallbackName)}&background=f97316&color=fff`;
 
         setUser({
           id: authUser.id,
@@ -716,15 +995,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           department: 'General',
         });
 
-        // Trigger teams, tasks, and daily logs load
-        fetchTeams(authUser.id);
-        fetchTasks(authUser.id);
-        fetchDailyLogs(authUser.id);
+        fetchTeams(authUser.id, shouldShowLoading);
+        fetchTasks(authUser.id, shouldShowLoading);
+        fetchDailyLogs(authUser.id, shouldShowLoading);
+        fetchFiles(undefined, shouldShowLoading);
+        fetchNotifications(shouldShowLoading);
+        fetchMeetings(shouldShowLoading);
 
         setCurrentViewState((prev) => {
           if (PUBLIC_VIEWS.includes(prev)) {
             const savedView = localStorage.getItem('worknest_current_view') as AppView | null;
-            return (savedView && !PUBLIC_VIEWS.includes(savedView)) ? savedView : 'dashboard';
+            return savedView && !PUBLIC_VIEWS.includes(savedView) ? savedView : 'dashboard';
           }
           return prev;
         });
@@ -740,7 +1021,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const avatar =
         profile?.avatar_url ||
         authUser.user_metadata?.avatar_url ||
-        `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=6366f1&color=fff`;
+        `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f97316&color=fff`;
       const department = profile?.department || 'General';
 
       setUser({
@@ -753,16 +1034,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       setUserError(null);
 
-      // Trigger loading real teams, tasks, and daily logs from Supabase
-      fetchTeams(authUser.id);
-      fetchTasks(authUser.id);
-      fetchDailyLogs(authUser.id);
+      fetchTeams(authUser.id, shouldShowLoading);
+      fetchTasks(authUser.id, shouldShowLoading);
+      fetchDailyLogs(authUser.id, shouldShowLoading);
+      fetchFiles(undefined, shouldShowLoading);
+      fetchNotifications(shouldShowLoading);
+      fetchMeetings(shouldShowLoading);
 
-      // On successful auth restoration, transition away from landing/login pages to dashboard or saved view
       setCurrentViewState((prev) => {
         if (PUBLIC_VIEWS.includes(prev)) {
           const savedView = localStorage.getItem('worknest_current_view') as AppView | null;
-          return (savedView && !PUBLIC_VIEWS.includes(savedView)) ? savedView : 'dashboard';
+          return savedView && !PUBLIC_VIEWS.includes(savedView) ? savedView : 'dashboard';
         }
         return prev;
       });
@@ -775,41 +1057,110 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Primary authentication handler: Clerk priority with legacy Supabase fallback
   useEffect(() => {
-    let isMounted = true;
+    if (!isClerkLoaded) return;
 
-    loadAuthenticatedUser();
+    if (isClerkSignedIn && clerkUser) {
+      syncAndLoadClerkUser(clerkUser, true);
+    } else {
+      loadLegacySupabaseUser(undefined, true);
+    }
+  }, [isClerkLoaded, isClerkSignedIn, clerkUser?.id]);
+
+  // Secondary listener: Supabase Auth session changes
+  useEffect(() => {
+    // When Clerk auth mode is enabled, legacy Supabase auth events are bypassed
+    if (isClerkAuthMode) return;
+
+    let isMounted = true;
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange((event: any, session: any) => {
       if (!isMounted) return;
 
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
+      // If user is already authenticated via Clerk, ignore legacy Supabase session events
+      if (isClerkSignedIn && clerkUser) return;
+
+      if (event === 'SIGNED_IN') {
         if (session?.user) {
-          loadAuthenticatedUser(session.user);
-        } else if (event === 'INITIAL_SESSION' && !session) {
+          const isSameUser = lastLoadedUserIdRef.current === session.user.id;
+          if (!isSameUser) {
+            if (lastLoadedUserIdRef.current) {
+              setTeams([]);
+              setTasks([]);
+              setDailyLogs([]);
+              setChannels([]);
+              setMessages([]);
+              setFiles([]);
+              setNotifications([]);
+              setMeetings([]);
+              setActiveVideoMeeting(null);
+            }
+            loadLegacySupabaseUser(session.user, true);
+          } else {
+            loadLegacySupabaseUser(session.user, false);
+          }
+        }
+      } else if (event === 'TOKEN_REFRESHED') {
+        if (session?.user) {
+          loadLegacySupabaseUser(session.user, false);
+        }
+      } else if (event === 'PASSWORD_RECOVERY') {
+        if (session?.user) {
+          loadLegacySupabaseUser(session.user, false);
+          setCurrentViewState('settings');
+          addToast('Please enter your new password in Account Security', 'info');
+        }
+      } else if (event === 'INITIAL_SESSION') {
+        if (session?.user) {
+          if (lastLoadedUserIdRef.current !== session.user.id) {
+            loadLegacySupabaseUser(session.user, false);
+          }
+        } else if (!isClerkSignedIn) {
+          lastLoadedUserIdRef.current = null;
           setUser(null);
           setTeams([]);
           setTasks([]);
           setDailyLogs([]);
           setChannels([]);
           setMessages([]);
+          setFiles([]);
+          setFilesError(null);
+          setNotifications([]);
+          setNotificationsError(null);
+          setMeetings([]);
+          setMeetingsError(null);
+          setActiveVideoMeeting(null);
           setActiveChannelIdState('');
           setIsLoadingUser(false);
         }
       } else if (event === 'SIGNED_OUT') {
-        setUser(null);
-        setTeams([]);
-        setTasks([]);
-        setDailyLogs([]);
-        setChannels([]);
-        setMessages([]);
-        setActiveChannelIdState('');
-        setIsLoadingUser(false);
-        localStorage.removeItem('worknest_current_view');
-        localStorage.removeItem('worknest_active_channel_id');
-        setCurrentViewState('landing');
+        if (!isClerkSignedIn) {
+          lastLoadedUserIdRef.current = null;
+          setUser(null);
+          setTeams([]);
+          setTasks([]);
+          setDailyLogs([]);
+          setChannels([]);
+          setMessages([]);
+          setFiles([]);
+          setFilesError(null);
+          setNotifications([]);
+          setNotificationsError(null);
+          setMeetings([]);
+          setMeetingsError(null);
+          setActiveVideoMeeting(null);
+          setActiveChannelIdState('');
+          setIsLoadingUser(false);
+          localStorage.removeItem('worknest_current_view');
+          localStorage.removeItem('worknest_active_channel_id');
+          localStorage.removeItem('worknest_active_team_id');
+          sessionStorage.removeItem('worknest_ai_messages');
+          sessionStorage.removeItem('worknest_ai_input_draft');
+          setCurrentViewState('landing');
+        }
       }
     });
 
@@ -817,14 +1168,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       isMounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [isClerkSignedIn, clerkUser]);
 
-  // Sync theme class to <html> element
+  // Sync theme class to <html> element & persist user preference
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+    try {
+      if (isDarkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('worknest_theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('worknest_theme', 'light');
+      }
+    } catch {
+      // Ignore localStorage errors
     }
   }, [isDarkMode]);
 
@@ -925,52 +1282,104 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  const retryProfileSync = async () => {
+    if (isClerkSignedIn && clerkUser) {
+      await syncAndLoadClerkUser(clerkUser, true);
+    } else {
+      await loadLegacySupabaseUser(undefined, true);
+    }
+  };
+
   const signOut = async () => {
     try {
-      await supabase.auth.signOut();
+      if (clerk && typeof clerk.signOut === 'function') {
+        await clerk.signOut();
+      }
+      if (!isClerkAuthMode) {
+        await supabase.auth.signOut();
+      }
     } catch (err) {
       console.error('Error signing out:', err);
     } finally {
+      lastLoadedUserIdRef.current = null;
       setUser(null);
+      setUserError(null);
       setTeams([]);
       setTasks([]);
       setDailyLogs([]);
       setChannels([]);
       setMessages([]);
+      setFiles([]);
+      setFilesError(null);
+      setNotifications([]);
+      setNotificationsError(null);
+      setMeetings([]);
+      setMeetingsError(null);
+      setActiveVideoMeeting(null);
       setActiveChannelIdState('');
       localStorage.removeItem('worknest_current_view');
       localStorage.removeItem('worknest_active_channel_id');
+      localStorage.removeItem('worknest_active_team_id');
+      sessionStorage.removeItem('worknest_ai_messages');
+      sessionStorage.removeItem('worknest_ai_input_draft');
       setCurrentViewState('landing');
       addToast('Signed out successfully', 'info');
     }
   };
 
   const updateUserProfile = async (name: string, email: string, department: string): Promise<boolean> => {
-    if (!user) {
-      addToast('No active user logged in.', 'error');
+    if (!user?.id) {
+      addToast('Session expired or unauthenticated. Please sign in again.', 'error');
+      await signOut();
       return false;
     }
 
     try {
-      // 1. Upsert public.profiles in Supabase for currently authenticated user's ID
-      const { error } = await supabase
-        .from('profiles')
-        .upsert({
-          id: user.id,
-          full_name: name,
-          email: email,
-          department: department,
-          updated_at: new Date().toISOString(),
-        });
+      // 1. If Clerk is active, sync first name and last name
+      if (clerkUser) {
+        try {
+          const parts = name.trim().split(' ');
+          const firstName = parts[0] || '';
+          const lastName = parts.slice(1).join(' ') || '';
+          await clerkUser.update({
+            firstName,
+            lastName,
+          });
+        } catch (clerkErr) {
+          console.warn('Notice: Clerk profile attributes could not be updated:', clerkErr);
+        }
+      } else if (!isClerkAuthMode) {
+        // Legacy Supabase email update
+        const { data: authData } = await supabase.auth.getUser();
+        const authUser = authData?.user;
+        if (authUser && email && email.trim().toLowerCase() !== authUser.email?.toLowerCase()) {
+          const { error: emailUpdateErr } = await supabase.auth.updateUser({ email: email.trim() });
+          if (emailUpdateErr) {
+            addToast(`Email change notice: ${emailUpdateErr.message}`, 'warning');
+          } else {
+            addToast('Confirmation link sent to verify your new email address.', 'info');
+          }
+        }
+      }
 
-      if (error) {
-        console.error('Error updating profile in Supabase:', error);
-        addToast(`Failed to update profile: ${error.message}`, 'error');
+      // 2. Update canonical profile in public.profiles table
+      const { error: profileErr } = await supabase
+        .from('profiles')
+        .update({
+          full_name: name.trim(),
+          department: department.trim(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      if (profileErr) {
+        console.error('Error updating profile in Supabase:', profileErr);
+        addToast(`Failed to update profile: ${profileErr.message}`, 'error');
         return false;
       }
 
-      // 2. Update React local state after database update succeeds
-      setUser((prev) => (prev ? { ...prev, name, email, department } : null));
+      // 3. Update React local state
+      setUser((prev) => (prev ? { ...prev, name: name.trim(), email: email.trim() || prev.email, department: department.trim() } : null));
       addToast('Profile information updated successfully', 'success');
       return true;
     } catch (err: unknown) {
@@ -1129,49 +1538,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     teamId: string,
     member: { email: string; role: UserRole; subgroupId?: string }
   ): Promise<boolean> => {
-    if (!user) return false;
+    if (!user) {
+      addToast('You must be signed in to invite team members.', 'error');
+      return false;
+    }
+
+    const trimmedEmail = member.email?.trim().toLowerCase();
+    if (!trimmedEmail) {
+      addToast('Please provide a valid email address.', 'error');
+      return false;
+    }
+
+    if (!teamId) {
+      addToast('A valid team must be selected to invite a member.', 'error');
+      return false;
+    }
+
     try {
-      // 1. Look up profile by email in public.profiles
-      const { data: foundProfile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('id, full_name, email')
-        .eq('email', member.email.trim().toLowerCase())
-        .maybeSingle();
+      const dbRole = member.role === 'personal_user' ? 'member' : member.role;
 
-      if (profileErr) {
-        console.error('Error querying profile:', profileErr);
-        addToast(`Error searching for profile: ${profileErr.message}`, 'error');
-        return false;
-      }
+      // 1. Atomically resolve user, verify group leader auth, and insert team_members
+      const { data, error } = await supabase.rpc('invite_team_member', {
+        p_team_id: teamId,
+        p_email: trimmedEmail,
+        p_role: dbRole,
+        p_subgroup_id: member.subgroupId || null,
+      });
 
-      if (!foundProfile) {
-        addToast(`User with email "${member.email}" is not registered on WorkNest. They must sign up first.`, 'error');
-        return false;
-      }
+      if (error) {
+        console.error('Error invoking invite_team_member RPC:', error);
+        const errMsg = error.message || '';
 
-      // 2. Insert team_members row
-      const { error: insertErr } = await supabase
-        .from('team_members')
-        .insert({
-          team_id: teamId,
-          user_id: foundProfile.id,
-          role: member.role === 'personal_user' ? 'member' : member.role,
-          subgroup_id: member.subgroupId || null,
-        });
-
-      if (insertErr) {
-        console.error('Error adding team member:', insertErr);
-        if (insertErr.code === '23505') {
-          addToast(`User is already a member of this team.`, 'warning');
-        } else if (insertErr.message?.includes('unq_one_subgroup_leader_per_subgroup')) {
-          addToast(`This subgroup already has a Sub-Group Leader. Subgroups can only have 1 leader.`, 'error');
+        if (errMsg.includes('not registered')) {
+          addToast(`User with email "${member.email}" is not registered on WorkNest. They must sign up first.`, 'error');
+        } else if (errMsg.includes('already a member')) {
+          addToast('User is already a member of this team.', 'warning');
+        } else if (errMsg.includes('Subgroups can only have 1 leader')) {
+          addToast('This subgroup already has a Sub-Group Leader. Subgroups can only have 1 leader.', 'error');
+        } else if (errMsg.includes('Access denied')) {
+          addToast('Access denied: only Group Leaders can add members to this team.', 'error');
+        } else if (errMsg.includes('Sub-Group Leaders must be assigned to a specific subgroup')) {
+          addToast('Sub-Group Leaders must be assigned to a specific subgroup.', 'error');
+        } else if (errMsg.includes('does not belong to this team')) {
+          addToast('The selected subgroup does not belong to this team.', 'error');
+        } else if (errMsg.includes('Not authenticated')) {
+          addToast('You must be signed in to invite team members.', 'error');
         } else {
-          addToast(`Failed to add team member: ${insertErr.message}`, 'error');
+          addToast(errMsg || 'Failed to add team member.', 'error');
         }
         return false;
       }
 
-      addToast(`${foundProfile.full_name || foundProfile.email} added to team!`, 'success');
+      const memberName = data?.full_name || trimmedEmail;
+      addToast(`${memberName} added to team!`, 'success');
       await fetchTeams(user.id);
       return true;
     } catch (err: unknown) {
@@ -1189,15 +1608,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): Promise<boolean> => {
     if (!user) return false;
     try {
+      const targetTeam = teams.find((t) => t.id === teamId);
+      const targetMember = targetTeam?.members.find((m) => m.id === memberId || m.memberId === memberId || m.userId === memberId);
+      const leadersCount = targetTeam?.members.filter((m) => m.role === 'group_leader').length || 0;
+
+      if (targetMember?.role === 'group_leader' && updates.role && updates.role !== 'group_leader' && leadersCount <= 1) {
+        addToast('Cannot demote the sole Group Leader. Promote another member first.', 'error');
+        return false;
+      }
+
       const payload: any = {};
       if (updates.role) payload.role = updates.role === 'personal_user' ? 'member' : updates.role;
       if (updates.subgroupId !== undefined) payload.subgroup_id = updates.subgroupId;
 
-      const { error } = await supabase
-        .from('team_members')
-        .update(payload)
-        .eq('id', memberId)
-        .eq('team_id', teamId);
+      const rowId = targetMember?.memberId;
+      const targetUserId = targetMember?.userId;
+
+      let updateQuery = supabase.from('team_members').update(payload).eq('team_id', teamId);
+      if (rowId && targetUserId) {
+        updateQuery = updateQuery.or(`id.eq.${rowId},user_id.eq.${targetUserId}`);
+      } else if (rowId) {
+        updateQuery = updateQuery.eq('id', rowId);
+      } else {
+        updateQuery = updateQuery.or(`id.eq.${memberId},user_id.eq.${memberId}`);
+      }
+
+      const { data, error } = await updateQuery.select('id');
 
       if (error) {
         console.error('Error updating member:', error);
@@ -1206,6 +1642,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } else {
           addToast(`Failed to update member: ${error.message}`, 'error');
         }
+        return false;
+      }
+
+      if (!data || data.length === 0) {
+        addToast('Failed to update member: Record not found or permission denied.', 'error');
         return false;
       }
 
@@ -1223,15 +1664,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const removeTeamMember = async (teamId: string, memberId: string): Promise<boolean> => {
     if (!user) return false;
     try {
-      const { error } = await supabase
-        .from('team_members')
-        .delete()
-        .eq('id', memberId)
-        .eq('team_id', teamId);
+      const targetTeam = teams.find((t) => t.id === teamId);
+      const targetMember = targetTeam?.members.find((m) => m.id === memberId || m.memberId === memberId || m.userId === memberId);
+      const leadersCount = targetTeam?.members.filter((m) => m.role === 'group_leader').length || 0;
+
+      if (targetMember?.role === 'group_leader' && leadersCount <= 1) {
+        addToast('Cannot remove the sole Group Leader of the team.', 'error');
+        return false;
+      }
+
+      const rowId = targetMember?.memberId;
+      const targetUserId = targetMember?.userId;
+
+      let deleteQuery = supabase.from('team_members').delete().eq('team_id', teamId);
+      if (rowId && targetUserId) {
+        deleteQuery = deleteQuery.or(`id.eq.${rowId},user_id.eq.${targetUserId}`);
+      } else if (rowId) {
+        deleteQuery = deleteQuery.eq('id', rowId);
+      } else {
+        deleteQuery = deleteQuery.or(`id.eq.${memberId},user_id.eq.${memberId}`);
+      }
+
+      const { data, error } = await deleteQuery.select('id');
 
       if (error) {
         console.error('Error removing member:', error);
         addToast(`Failed to remove member: ${error.message}`, 'error');
+        return false;
+      }
+
+      if (!data || data.length === 0) {
+        addToast('Failed to remove member: Record not found or permission denied.', 'error');
         return false;
       }
 
@@ -1277,6 +1740,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const deleteDailyLog = async (id: string): Promise<boolean> => {
+    if (!user) {
+      addToast('Must be logged in to delete a daily log.', 'error');
+      return false;
+    }
+    try {
+      await dailyLogService.deleteDailyLog(id, user.id);
+      setDailyLogs((prev) => prev.filter((l) => l.id !== id));
+      addToast('Daily log removed', 'warning');
+      return true;
+    } catch (err: unknown) {
+      console.error('Error deleting daily log:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to delete daily log.';
+      addToast(`Error deleting log: ${msg}`, 'error');
+      return false;
+    }
+  };
+
   const sendMessage = async (
     channelId: string,
     text: string,
@@ -1311,9 +1792,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return true;
     } catch (err: unknown) {
       console.error('Error sending message:', err);
+      let rollbackDetail = '';
+      // Compensating cleanup: if sending message failed, delete any uploaded storage assets
+      if (attachments && attachments.length > 0) {
+        for (const att of attachments) {
+          if (att.path) {
+            try {
+              const cleaned = await chatService.deleteAttachment(att.path);
+              if (!cleaned) {
+                rollbackDetail = ' (Compensating storage cleanup could not delete the uploaded file)';
+              }
+            } catch (cleanupErr) {
+              console.warn('Storage rollback cleanup error for attachment:', cleanupErr);
+              rollbackDetail = ` (Compensating storage cleanup error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)})`;
+            }
+          }
+        }
+      }
       const msg = err instanceof Error ? err.message : 'Failed to send message.';
-      addToast(msg, 'error');
+      addToast(`${msg}${rollbackDetail}`, 'error');
       return false;
+    }
+  };
+
+  const downloadChatAttachment = async (
+    att: { name: string; url?: string; path?: string }
+  ): Promise<void> => {
+    try {
+      await chatService.downloadAttachment(att);
+    } catch (err: unknown) {
+      console.error('Error downloading chat attachment:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to download attachment.';
+      addToast(msg, 'error');
     }
   };
 
@@ -1443,6 +1953,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const uploadFile = async (
+    file: File,
+    options?: { teamId?: string; customName?: string; category?: FileCategory }
+  ): Promise<ProjectFile | null> => {
+    if (!user) {
+      addToast('Must be logged in to upload files.', 'error');
+      return null;
+    }
+
+    try {
+      const created = await fileService.uploadFile({
+        file,
+        customName: options?.customName,
+        teamId: options?.teamId,
+        category: options?.category,
+        userId: user.id,
+      });
+
+      setFiles((prev) => [created, ...prev]);
+      addToast(`"${created.name}" uploaded successfully!`, 'success');
+      return created;
+    } catch (err: unknown) {
+      console.error('Error uploading file:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to upload file.';
+      addToast(msg, 'error');
+      throw err;
+    }
+  };
+
   const addFile = (file: Omit<ProjectFile, 'id' | 'uploadedBy' | 'uploaderAvatar' | 'date'>) => {
     const created: ProjectFile = {
       ...file,
@@ -1452,82 +1991,556 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       date: new Date().toISOString().split('T')[0],
     };
     setFiles((prev) => [created, ...prev]);
-    addToast('File uploaded successfully', 'success');
+    addToast('File record created', 'success');
   };
 
-  const deleteFile = (id: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
-    addToast('File removed', 'warning');
+  const deleteFile = async (id: string): Promise<boolean> => {
+    const targetFile = files.find((f) => f.id === id);
+    try {
+      if (id.startsWith('file-')) {
+        // Mock / local file
+        setFiles((prev) => prev.filter((f) => f.id !== id));
+        addToast('File removed', 'warning');
+        return true;
+      }
+
+      await fileService.deleteFile(id, targetFile?.storagePath);
+      setFiles((prev) => prev.filter((f) => f.id !== id));
+      addToast('File deleted successfully', 'success');
+      return true;
+    } catch (err: unknown) {
+      console.error('Error deleting file:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to delete file.';
+      addToast(msg, 'error');
+      return false;
+    }
+  };
+
+  const downloadFile = async (file: ProjectFile): Promise<void> => {
+    try {
+      addToast(`Preparing download for "${file.name}"...`, 'info');
+      await fileService.downloadFile(file);
+    } catch (err: unknown) {
+      console.error('Error downloading file:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to download file.';
+      addToast(msg, 'error');
+    }
+  };
+
+  const getFilePreviewUrl = async (file: ProjectFile): Promise<string | null> => {
+    if (file.url && file.url.startsWith('http')) return file.url;
+    if (file.storagePath) {
+      return await fileService.getSignedUrl(file.storagePath, 3600);
+    }
+    return null;
+  };
+
+  const createMeeting = async (params: CreateMeetingParams): Promise<Meeting | null> => {
+    if (!user) {
+      const msg = 'You must be signed in to schedule a persistent meeting.';
+      addToast(msg, 'error');
+      throw new Error(msg);
+    }
+
+    try {
+      const created = await meetingService.createMeeting(params, user.id, {
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+      });
+      setMeetings((prev) => {
+        const filtered = prev.filter((m) => m.id !== created.id);
+        const next = [created, ...filtered];
+        return next.sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`));
+      });
+      addToast(`Meeting "${created.title}" scheduled successfully`, 'success');
+      return created;
+    } catch (err: unknown) {
+      console.error('[AppContext] Failed to create meeting:', err);
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err && 'message' in err
+          ? String((err as any).message)
+          : 'Failed to schedule meeting.';
+      addToast(msg, 'error');
+      throw err;
+    }
+  };
+
+  const cancelMeeting = async (meetingId: string): Promise<boolean> => {
+    if (!user) {
+      addToast('You must be signed in to cancel a meeting.', 'error');
+      return false;
+    }
+
+    try {
+      if (meetingId.startsWith('mtg-')) {
+        // Local / mock meeting
+        setMeetings((prev) => prev.filter((m) => m.id !== meetingId));
+        if (activeVideoMeeting?.id === meetingId) {
+          setActiveVideoMeeting(null);
+        }
+        addToast('Meeting cancelled', 'info');
+        return true;
+      }
+
+      await meetingService.cancelMeeting(meetingId);
+      setMeetings((prev) => prev.filter((m) => m.id !== meetingId));
+      if (activeVideoMeeting?.id === meetingId) {
+        setActiveVideoMeeting(null);
+      }
+      addToast('Meeting cancelled successfully', 'info');
+      return true;
+    } catch (err: unknown) {
+      console.error('[AppContext] Failed to cancel meeting:', err);
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err && 'message' in err
+          ? String((err as any).message)
+          : 'Failed to cancel meeting.';
+      addToast(msg, 'error');
+      return false;
+    }
   };
 
   const addMeeting = (newMeeting: Omit<Meeting, 'id'>) => {
+    if (user) {
+      createMeeting({
+        title: newMeeting.title,
+        description: newMeeting.description,
+        meetingDate: newMeeting.date,
+        meetingTime: newMeeting.time,
+        durationMinutes: parseInt(newMeeting.duration) || 30,
+        type: newMeeting.type,
+      }).catch((err) => {
+        console.error('[AppContext] addMeeting error:', err);
+      });
+      return;
+    }
     const created: Meeting = {
       ...newMeeting,
       id: `mtg-${Date.now()}`,
+      roomName: `WorkNest-local-${Date.now()}`,
     };
     setMeetings((prev) => [created, ...prev]);
     addToast('Meeting scheduled successfully', 'success');
   };
 
-  const sendAIMessage = (text: string) => {
-    const userMsg: AIMessage = {
-      id: `aimsg-${Date.now()}`,
-      sender: 'user',
-      text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
+  const sendAIMessageInternal = async (
+    text: string,
+    options?: { skipAppendingUser?: boolean }
+  ): Promise<boolean> => {
+    const cleanText = text.trim();
+    if (!cleanText) return false;
+    if (isSendingAIMessageRef.current || isAITyping) return false;
 
-    setAiMessages((prev) => [...prev, userMsg]);
+    isSendingAIMessageRef.current = true;
+    setIsAITyping(true);
+    setAiStage('context');
+    setAiError(null);
 
-    // Simulate intelligent AI response based on query
-    setTimeout(() => {
-      let aiText = `I have processed your request regarding "${text}". Here is an intelligent breakdown based on your WorkNest team data:`;
-      let insights: AIMessage['insights'] = [];
+    const controller = new AbortController();
+    aiAbortControllerRef.current = controller;
 
-      if (text.toLowerCase().includes('break') || text.toLowerCase().includes('smaller steps')) {
-        aiText = `Here is a step-by-step execution plan for your team:`;
-        insights = [
-          { title: 'Step 1: Architecture & API Schema', description: 'Define endpoints and data models for team review.', type: 'info' },
-          { title: 'Step 2: Subgroup Implementation', description: 'Assign David Chen (Backend) and Sarah Jenkins (UI tokens).', type: 'info' },
-          { title: 'Step 3: QA & Load Testing', description: 'Run automated Cypress suite with Michael Vance.', type: 'success' },
-        ];
-      } else if (text.toLowerCase().includes('summarize') || text.toLowerCase().includes('progress')) {
-        aiText = `Your team has logged 22.5 total hours today. Key achievements include JWT OAuth refresh token completion and dark mode design system tokens.`;
-        insights = [
-          { title: 'Project Progress: 78%', description: 'Development subgroup leads velocity with 3 tasks completed this week.', type: 'success' },
-        ];
-      } else if (text.toLowerCase().includes('risk') || text.toLowerCase().includes('attention')) {
-        aiText = `WorkNest AI detected 2 high-priority tasks approaching their target deadlines:`;
-        insights = [
-          { title: 'WebRTC Audio Waveforms', description: 'Assigned to Alex Morgan. Target date: Aug 20, 2026.', type: 'warning' },
-          { title: 'OAuth 2.0 RBAC Microservices', description: 'Urgent priority. Target date: Aug 18, 2026.', type: 'urgent' },
-        ];
-      } else {
-        aiText = `Your project is progressing well, but two high-priority tasks are approaching their deadlines. Consider reviewing the API integration milestone and redistributing one QA task.`;
-        insights = [
-          { title: 'Optimization Suggestion', description: 'Reassign 1 QA task to David Chen to balance workload.', type: 'info' },
-        ];
+    if (!options?.skipAppendingUser) {
+      const userMsg: AIMessage = {
+        id: `aimsg-${Date.now()}`,
+        sender: 'user',
+        text: cleanText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setAiMessages((prev) => [...prev, userMsg]);
+    }
+
+    // Filter out previous error messages before passing to AI service
+    const historySnapshot = aiMessages.filter((m) => !m.isError);
+
+    try {
+      // Transition from context to gemini inference
+      setAiStage('gemini');
+
+      const response = await aiService.sendMessage(cleanText, historySnapshot, {
+        signal: controller.signal,
+      });
+
+      // Transition to action validation if actions returned
+      if (response.proposedActions && response.proposedActions.length > 0) {
+        setAiStage('actions');
+      }
+
+      // Validate any proposed actions against active workspace data
+      let validatedActions: AIAction[] | undefined = undefined;
+      if (response.proposedActions && response.proposedActions.length > 0) {
+        validatedActions = response.proposedActions.map((act) => {
+          const res = actionValidationService.validate(act, {
+            tasks,
+            teams,
+            dailyLogs,
+            meetings,
+            currentUser: user,
+            activeTeamId,
+          });
+          return res.validatedAction;
+        });
       }
 
       const aiReply: AIMessage = {
         id: `aimsg-${Date.now() + 1}`,
         sender: 'ai',
-        text: aiText,
+        text: response.text,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        insights,
+        insights: response.insights,
+        model: response.model,
+        actions: validatedActions,
       };
 
       setAiMessages((prev) => [...prev, aiReply]);
-    }, 800);
+      return true;
+    } catch (err: unknown) {
+      const isAborted =
+        (err instanceof Error &&
+          (err.name === 'AbortError' ||
+            err.message.toLowerCase().includes('cancelled') ||
+            err.message.toLowerCase().includes('aborted'))) ||
+        controller.signal.aborted;
+
+      if (isAborted) {
+        const cancelReply: AIMessage = {
+          id: `aimsg-${Date.now() + 1}`,
+          sender: 'ai',
+          text: 'Request was cancelled.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+        setAiMessages((prev) => [...prev, cancelReply]);
+        return false;
+      }
+
+      const errorMessage =
+        err instanceof Error ? err.message : 'Failed to communicate with WorkNest AI.';
+      setAiError(errorMessage);
+
+      const errorReply: AIMessage = {
+        id: `aimsg-${Date.now() + 1}`,
+        sender: 'ai',
+        text: `Error: ${errorMessage}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isError: true,
+      };
+
+      setAiMessages((prev) => [...prev, errorReply]);
+      addToast(errorMessage, 'error');
+      return false;
+    } finally {
+      setIsAITyping(false);
+      setAiStage('idle');
+      isSendingAIMessageRef.current = false;
+      aiAbortControllerRef.current = null;
+    }
   };
 
-  const markNotificationAsRead = (id: string) => {
+  const sendAIMessage = (text: string): Promise<boolean> =>
+    sendAIMessageInternal(text, { skipAppendingUser: false });
+
+  const cancelAIMessage = () => {
+    if (aiAbortControllerRef.current) {
+      aiAbortControllerRef.current.abort();
+      aiAbortControllerRef.current = null;
+    }
+    setIsAITyping(false);
+    setAiStage('idle');
+    isSendingAIMessageRef.current = false;
+  };
+
+  const executeAIAction = async (
+    actionId: string,
+    overrides?: Record<string, any>
+  ): Promise<boolean> => {
+    let targetAction: AIAction | null = null;
+
+    for (const msg of aiMessages) {
+      const found = msg.actions?.find((a) => a.id === actionId);
+      if (found) {
+        targetAction = found;
+        break;
+      }
+    }
+
+    if (!targetAction) {
+      addToast('Proposed action not found or expired.', 'error');
+      return false;
+    }
+
+    // Prevent duplicate clicks or execution of already completed actions
+    if (targetAction.status === 'executing' || targetAction.status === 'succeeded') {
+      return false;
+    }
+
+    if (!user) {
+      addToast('Authentication required to execute actions.', 'error');
+      return false;
+    }
+
+    const mergedParams = { ...targetAction.params, ...(overrides || {}) };
+
+    // Update status to executing
+    setAiMessages((prev) =>
+      prev.map((msg) => ({
+        ...msg,
+        actions: msg.actions?.map((a) =>
+          a.id === actionId ? { ...a, status: 'executing' as const, params: mergedParams } : a
+        ),
+      }))
+    );
+
+    let executionSuccess = false;
+    let errorMessage = '';
+
+    try {
+      switch (targetAction.type) {
+        case 'create_task': {
+          executionSuccess = await addTask({
+            title: mergedParams.title,
+            description: mergedParams.description || '',
+            priority: mergedParams.priority || 'medium',
+            status: mergedParams.status || 'todo',
+            dueDate: mergedParams.dueDate || new Date().toISOString().split('T')[0],
+            category: mergedParams.category || 'General',
+            progress: 0,
+            assignedTo: mergedParams.assignedToName,
+            assignedToId: mergedParams.assignedToId,
+            teamId: mergedParams.teamId || activeTeamId || undefined,
+            subgroupId: mergedParams.subgroupId,
+          });
+          break;
+        }
+
+        case 'update_task': {
+          const updates: Partial<Task> = {};
+          if (mergedParams.title) updates.title = mergedParams.title;
+          if (mergedParams.description !== undefined) updates.description = mergedParams.description;
+          if (mergedParams.priority) updates.priority = mergedParams.priority;
+          if (mergedParams.status) updates.status = mergedParams.status;
+          if (typeof mergedParams.progress === 'number') updates.progress = mergedParams.progress;
+          if (mergedParams.dueDate) updates.dueDate = mergedParams.dueDate;
+          if (mergedParams.category) updates.category = mergedParams.category;
+
+          executionSuccess = await editTask(mergedParams.taskId, updates);
+          break;
+        }
+
+        case 'assign_task': {
+          executionSuccess = await editTask(mergedParams.taskId, {
+            assignedToId: mergedParams.assigneeId,
+            assignedTo: mergedParams.assigneeName,
+          });
+          break;
+        }
+
+        case 'delete_task': {
+          executionSuccess = await deleteTask(mergedParams.taskId);
+          break;
+        }
+
+        case 'create_daily_log': {
+          executionSuccess = await addDailyLog({
+            date: mergedParams.date || new Date().toISOString().split('T')[0],
+            hoursWorked: Number(mergedParams.hoursWorked) || 8,
+            workCompleted: mergedParams.workCompleted || '',
+            challengesFaced: mergedParams.challengesFaced || '',
+            planForTomorrow: mergedParams.planForTomorrow || '',
+            subgroup: '',
+            teamId: activeTeamId || undefined,
+          });
+          break;
+        }
+
+        case 'create_meeting': {
+          const res = await createMeeting({
+            title: mergedParams.title,
+            description: mergedParams.description || '',
+            meetingDate: mergedParams.meetingDate,
+            meetingTime: mergedParams.meetingTime,
+            durationMinutes: Number(mergedParams.durationMinutes) || 30,
+            type: mergedParams.type || 'Video Conference',
+            teamId: mergedParams.teamId || activeTeamId || undefined,
+          });
+          executionSuccess = !!res;
+          break;
+        }
+
+        case 'cancel_meeting': {
+          executionSuccess = await cancelMeeting(mergedParams.meetingId);
+          break;
+        }
+
+        case 'invite_team_member': {
+          executionSuccess = await addTeamMember(mergedParams.teamId, {
+            email: mergedParams.email,
+            role: mergedParams.role || 'member',
+          });
+          break;
+        }
+
+        case 'update_team_member_role': {
+          executionSuccess = await updateTeamMember(mergedParams.teamId, mergedParams.memberId, {
+            role: mergedParams.role,
+          });
+          break;
+        }
+
+        case 'remove_team_member': {
+          executionSuccess = await removeTeamMember(mergedParams.teamId, mergedParams.memberId);
+          break;
+        }
+
+        default:
+          throw new Error(`Unsupported action type: ${(targetAction as any).type}`);
+      }
+    } catch (err: unknown) {
+      executionSuccess = false;
+      errorMessage = err instanceof Error ? err.message : 'Action execution failed.';
+    }
+
+    if (executionSuccess) {
+      const nowFormatted = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      // Update action status to succeeded
+      setAiMessages((prev) =>
+        prev.map((msg) => ({
+          ...msg,
+          actions: msg.actions?.map((a) =>
+            a.id === actionId
+              ? {
+                  ...a,
+                  status: 'succeeded' as const,
+                  executedAt: new Date().toISOString(),
+                }
+              : a
+          ),
+        }))
+      );
+
+      // Append follow-up conversational confirmation turn from WorkNest AI
+      const confirmationTurn: AIMessage = {
+        id: `aimsg-${Date.now() + 1}`,
+        sender: 'ai',
+        text: `Action executed successfully: **${targetAction.description}**. WorkNest data is updated.`,
+        timestamp: nowFormatted,
+      };
+
+      setAiMessages((prev) => [...prev, confirmationTurn]);
+      addToast('Action executed successfully', 'success');
+      return true;
+    } else {
+      const failureReason = errorMessage || 'Operation returned failure status from database service.';
+
+      // Update action status to failed
+      setAiMessages((prev) =>
+        prev.map((msg) => ({
+          ...msg,
+          actions: msg.actions?.map((a) =>
+            a.id === actionId
+              ? {
+                  ...a,
+                  status: 'failed' as const,
+                  executionError: failureReason,
+                }
+              : a
+          ),
+        }))
+      );
+
+      addToast(`Action failed: ${failureReason}`, 'error');
+      return false;
+    }
+  };
+
+  const cancelAIAction = (actionId: string) => {
+    setAiMessages((prev) =>
+      prev.map((msg) => ({
+        ...msg,
+        actions: msg.actions?.map((a) =>
+          a.id === actionId ? { ...a, status: 'cancelled' as const } : a
+        ),
+      }))
+    );
+    addToast('Action proposal cancelled', 'info');
+  };
+
+  const updateAIActionParams = (actionId: string, newParams: Record<string, any>) => {
+    setAiMessages((prev) =>
+      prev.map((msg) => ({
+        ...msg,
+        actions: msg.actions?.map((a) =>
+          a.id === actionId ? { ...a, params: { ...a.params, ...newParams } } : a
+        ),
+      }))
+    );
+  };
+
+  const clearAIMessages = () => {
+    setAiMessages([]);
+    setAiError(null);
+    try {
+      sessionStorage.removeItem('worknest_ai_messages');
+    } catch {
+      // Ignore sessionStorage removal errors
+    }
+    addToast('AI conversation cleared', 'info');
+  };
+
+  const retryLastAIMessage = async (): Promise<boolean> => {
+    const lastUserMsg = [...aiMessages].reverse().find((m) => m.sender === 'user');
+    if (!lastUserMsg) return false;
+
+    // Remove the trailing error message if present
+    setAiMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.isError) {
+        return prev.slice(0, -1);
+      }
+      return prev;
+    });
+
+    return sendAIMessageInternal(lastUserMsg.text, { skipAppendingUser: true });
+  };
+
+  const markNotificationAsRead = async (id: string): Promise<boolean> => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+    if (id.startsWith('notif-')) return true;
+    try {
+      await notificationService.markAsRead(id);
+      return true;
+    } catch (err) {
+      console.error('Error marking notification as read:', err);
+      return false;
+    }
   };
 
-  const markAllNotificationsAsRead = () => {
+  const markAllNotificationsAsRead = async (): Promise<boolean> => {
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
     addToast('All notifications marked as read', 'info');
+    try {
+      await notificationService.markAllAsRead();
+      return true;
+    } catch (err) {
+      console.error('Error marking all notifications as read:', err);
+      return false;
+    }
+  };
+
+  const deleteNotification = async (id: string): Promise<boolean> => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    if (id.startsWith('notif-')) return true;
+    try {
+      await notificationService.deleteNotification(id);
+      return true;
+    } catch (err) {
+      console.error('Error deleting notification:', err);
+      return false;
+    }
   };
 
   return (
@@ -1544,6 +2557,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         user,
         isLoadingUser,
         userError,
+        retryProfileSync,
         signOut,
         updateUserProfile,
         tasks,
@@ -1568,6 +2582,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isLoadingDailyLogs,
         dailyLogsError,
         addDailyLog,
+        deleteDailyLog,
         refreshDailyLogs,
         channels,
         isLoadingChannels,
@@ -1582,22 +2597,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteMessage,
         toggleReaction,
         uploadChatAttachment,
+        downloadChatAttachment,
         createChannel,
         refreshChannels,
         refreshMessages,
         onlineCount,
         files,
+        isLoadingFiles,
+        filesError,
+        refreshFiles,
+        uploadFile,
         addFile,
         deleteFile,
+        downloadFile,
+        getFilePreviewUrl,
         meetings,
+        isLoadingMeetings,
+        meetingsError,
+        refreshMeetings,
+        createMeeting,
+        cancelMeeting,
         addMeeting,
         activeVideoMeeting,
         setActiveVideoMeeting,
         aiMessages,
+        isAITyping,
+        aiStage,
+        aiError,
         sendAIMessage,
+        cancelAIMessage,
+        clearAIMessages,
+        retryLastAIMessage,
+        executeAIAction,
+        cancelAIAction,
+        updateAIActionParams,
         notifications,
+        isLoadingNotifications,
+        notificationsError,
+        unreadNotificationsCount,
+        refreshNotifications,
         markNotificationAsRead,
         markAllNotificationsAsRead,
+        deleteNotification,
         isSearchOpen,
         setIsSearchOpen,
         isCreateModalOpen,

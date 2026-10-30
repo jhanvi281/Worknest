@@ -261,6 +261,45 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
+-- Check Meeting Participant membership (breaks RLS circular recursion)
+CREATE OR REPLACE FUNCTION public.is_meeting_participant(check_meeting_id UUID, check_user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.meeting_participants
+    WHERE meeting_id = check_meeting_id AND user_id = check_user_id
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Check Meeting View permission (breaks RLS circular recursion)
+CREATE OR REPLACE FUNCTION public.can_view_meeting(check_meeting_id UUID, check_user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.meetings
+    WHERE id = check_meeting_id AND (
+      organizer_id = check_user_id OR
+      (team_id IS NOT NULL AND public.is_team_member(team_id))
+    )
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Check Meeting Management permission (breaks RLS circular recursion)
+CREATE OR REPLACE FUNCTION public.can_manage_meeting_participants(check_meeting_id UUID, check_user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.meetings
+    WHERE id = check_meeting_id AND (
+      organizer_id = check_user_id OR
+      (team_id IS NOT NULL AND public.is_group_leader(team_id))
+    )
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
 -- --------------------------------------------------------------------
 -- 5. ENABLE ROW LEVEL SECURITY (RLS) ON ALL TABLES
 -- --------------------------------------------------------------------
@@ -510,10 +549,7 @@ CREATE POLICY "Team members or participants view meetings"
   USING (
     organizer_id = auth.uid() OR
     (team_id IS NOT NULL AND public.is_team_member(team_id)) OR
-    EXISTS (
-      SELECT 1 FROM public.meeting_participants mp
-      WHERE mp.meeting_id = meetings.id AND mp.user_id = auth.uid()
-    )
+    public.is_meeting_participant(id, auth.uid())
   );
 
 CREATE POLICY "Authenticated users can create meetings"
@@ -540,25 +576,13 @@ CREATE POLICY "View meeting participants"
   ON public.meeting_participants FOR SELECT TO authenticated
   USING (
     user_id = auth.uid() OR
-    EXISTS (
-      SELECT 1 FROM public.meetings m
-      WHERE m.id = meeting_participants.meeting_id AND (
-        m.organizer_id = auth.uid() OR
-        (m.team_id IS NOT NULL AND public.is_team_member(m.team_id))
-      )
-    )
+    public.can_view_meeting(meeting_id, auth.uid())
   );
 
 CREATE POLICY "Organizer or Group Leader insert participants"
   ON public.meeting_participants FOR INSERT TO authenticated
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.meetings m
-      WHERE m.id = meeting_id AND (
-        m.organizer_id = auth.uid() OR
-        (m.team_id IS NOT NULL AND public.is_group_leader(m.team_id))
-      )
-    )
+    public.can_manage_meeting_participants(meeting_id, auth.uid())
   );
 
 CREATE POLICY "Participant self or Organizer update status"
@@ -574,13 +598,7 @@ CREATE POLICY "Participant self or Organizer update status"
 CREATE POLICY "Organizer or Group Leader remove participants"
   ON public.meeting_participants FOR DELETE TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM public.meetings m
-      WHERE m.id = meeting_participants.meeting_id AND (
-        m.organizer_id = auth.uid() OR
-        (m.team_id IS NOT NULL AND public.is_group_leader(m.team_id))
-      )
-    )
+    public.can_manage_meeting_participants(meeting_id, auth.uid())
   );
 
 -- === FILES POLICIES ===

@@ -20,24 +20,24 @@ export const ToastContainer: React.FC = () => {
           icon = <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />;
           borderClass = 'border-rose-500/30 dark:border-rose-500/20';
         } else if (toast.type === 'info') {
-          icon = <Info className="w-5 h-5 text-indigo-500 shrink-0" />;
-          borderClass = 'border-indigo-500/30 dark:border-indigo-500/20';
+          icon = <Info className="w-5 h-5 text-[#F97316] shrink-0" />;
+          borderClass = 'border-orange-500/30 dark:border-orange-500/20';
         }
 
         return (
           <div
             key={toast.id}
-            className={`pointer-events-auto flex items-center justify-between gap-3 p-3.5 rounded-xl bg-white dark:bg-slate-900 border ${borderClass} shadow-lg shadow-slate-900/10 dark:shadow-black/40 animate-fade-in transition-all`}
+            className={`pointer-events-auto flex items-center justify-between gap-3 p-3.5 rounded-xl bg-white dark:bg-[#141414] border ${borderClass} shadow-lg shadow-black/5 dark:shadow-black/50 animate-fade-in transition-all`}
           >
             <div className="flex items-center gap-3">
               {icon}
-              <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
+              <span className="text-sm font-medium text-[#171717] dark:text-[#FAFAFA]">
                 {toast.title}
               </span>
             </div>
             <button
               onClick={() => removeToast(toast.id)}
-              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              className="p-1 rounded-lg text-[#737373] dark:text-[#A3A3A3] hover:text-[#171717] dark:hover:text-[#FAFAFA] hover:bg-[#FAFAFA] dark:hover:bg-[#1C1C1C] transition"
             >
               <X className="w-4 h-4" />
             </button>

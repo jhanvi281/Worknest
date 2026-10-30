@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, isClerkAuthMode } from '../lib/supabase';
 import type { ChatChannel, ChatMessage } from '../types';
 
 interface DbProfile {
@@ -29,6 +29,99 @@ interface DbMessage {
   updated_at?: string | null;
   sender_profile?: DbProfile | null;
 }
+
+export const CHAT_STORAGE_BUCKET = 'chat-attachments';
+export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 26214400; // 25 MB
+export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const BLOCKED_CHAT_EXTENSIONS = new Set([
+  'exe', 'bat', 'cmd', 'sh', 'php', 'py', 'pl', 'cgi', 'vbs', 'msi',
+  'bin', 'dll', 'com', 'app', 'scr', 'iso', 'jar', 'apk', 'pif', 'gadget',
+  'wsf', 'cpl', 'vbe', 'jse', 'hta'
+]);
+
+export const ALLOWED_CHAT_EXTENSIONS = new Set([
+  // Images
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tif', 'tiff',
+  // Documents
+  'pdf', 'doc', 'docx', 'txt', 'rtf', 'md', 'csv', 'tsv', 'xls', 'xlsx',
+  'ppt', 'pptx', 'pages', 'numbers', 'key', 'odt', 'ods', 'odp',
+  // Archives
+  'zip', 'tar', 'gz', '7z', 'rar', 'bz2', 'xz',
+  // Audio & Video
+  'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'mp4', 'mov', 'webm', 'avi', 'mkv',
+  // Code & Data
+  'json', 'xml', 'yaml', 'yml', 'sql', 'log'
+]);
+
+export const sanitizeChatFileName = (fileName: string): string => {
+  if (!fileName) return `attachment_${Date.now()}`;
+  // Strip directory paths & path traversal
+  const baseName = fileName.replace(/^.*[\\/]/, '');
+  const noControlChars = Array.from(baseName)
+    .filter((c) => {
+      const code = c.charCodeAt(0);
+      return code >= 32 && code !== 127;
+    })
+    .join('');
+  const lastDot = noControlChars.lastIndexOf('.');
+  let namePart = lastDot > 0 ? noControlChars.slice(0, lastDot) : noControlChars;
+  const extPart = lastDot > 0 ? noControlChars.slice(lastDot + 1).toLowerCase() : '';
+
+  // Prevent leading/trailing dots, consecutive dots, illegal characters, and orphan underscores
+  namePart = namePart
+    .replace(/^\.+/, '')
+    .replace(/\.+$/, '')
+    .replace(/\.{2,}/g, '_')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+/, '')
+    .replace(/_+$/, '');
+
+  const cleanExt = extPart.replace(/[^a-zA-Z0-9]/g, '');
+
+  if (!namePart || namePart === '_') {
+    namePart = `attachment_${Date.now()}`;
+  }
+
+  return cleanExt ? `${namePart}.${cleanExt}` : namePart;
+};
+
+export const validateChatFile = (file: File): { valid: boolean; error?: string } => {
+  if (!file) {
+    return { valid: false, error: 'No file selected for attachment.' };
+  }
+
+  if (file.size <= 0) {
+    return { valid: false, error: 'Cannot upload empty (0 byte) files.' };
+  }
+
+  if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
+    return {
+      valid: false,
+      error: `File size exceeds the 25MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB). Please select a smaller file.`,
+    };
+  }
+
+  const baseName = file.name.replace(/^.*[\\/]/, '');
+  const ext = baseName.includes('.') ? baseName.split('.').pop()?.toLowerCase() || '' : '';
+
+  if (ext && BLOCKED_CHAT_EXTENSIONS.has(ext)) {
+    return {
+      valid: false,
+      error: `Executable or script file type (.${ext}) is strictly prohibited for security reasons.`,
+    };
+  }
+
+  if (ext && !ALLOWED_CHAT_EXTENSIONS.has(ext)) {
+    return {
+      valid: false,
+      error: `File type .${ext} is not supported. Supported formats include images, documents, presentations, spreadsheets, archives, and media.`,
+    };
+  }
+
+  return { valid: true };
+};
 
 export const formatChatTimestamp = (isoString?: string): string => {
   if (!isoString) return '';
@@ -71,7 +164,7 @@ export const mapSupabaseMessage = (m: DbMessage, currentUserId?: string): ChatMe
     (profile?.email ? profile.email.split('@')[0] : 'Member');
   const senderAvatar =
     profile?.avatar_url ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=6366f1&color=fff`;
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName)}&background=f97316&color=fff`;
 
   const rawReactions = Array.isArray(m.reactions) ? m.reactions : [];
   const reactions = rawReactions.map((r) => {
@@ -325,10 +418,25 @@ export const chatService = {
     },
     userId: string
   ): Promise<ChatMessage> {
+    const trimmedText = params.text.trim();
+    const hasAttachments = Array.isArray(params.attachments) && params.attachments.length > 0;
+    if (!trimmedText && !hasAttachments) {
+      throw new Error('Message cannot be empty. Please provide text or an attachment.');
+    }
+
+    let effectiveUserId: string | undefined = userId;
+    if (!effectiveUserId && !isClerkAuthMode) {
+      const { data: authData } = await supabase.auth.getUser();
+      effectiveUserId = authData?.user?.id;
+    }
+    if (!effectiveUserId) {
+      throw new Error('Authentication required to send a message.');
+    }
+
     const payload = {
       channel_id: params.channelId,
-      sender_id: userId,
-      text: params.text.trim(),
+      sender_id: effectiveUserId,
+      text: trimmedText,
       attachments: params.attachments || [],
       reactions: [],
     };
@@ -353,7 +461,7 @@ export const chatService = {
       throw error;
     }
 
-    return mapSupabaseMessage(data as unknown as DbMessage, userId);
+    return mapSupabaseMessage(data as unknown as DbMessage, effectiveUserId);
   },
 
   async editMessage(messageId: string, newText: string, userId: string): Promise<ChatMessage> {
@@ -362,13 +470,22 @@ export const chatService = {
       throw new Error('Message content cannot be empty.');
     }
 
+    let effectiveUserId: string | undefined = userId;
+    if (!effectiveUserId && !isClerkAuthMode) {
+      const { data: authData } = await supabase.auth.getUser();
+      effectiveUserId = authData?.user?.id;
+    }
+    if (!effectiveUserId) {
+      throw new Error('Authentication required to edit a message.');
+    }
+
     const { data, error } = await supabase
       .from('messages')
       .update({
         text: trimmed,
       })
       .eq('id', messageId)
-      .eq('sender_id', userId)
+      .eq('sender_id', effectiveUserId)
       .select(`
         id,
         channel_id,
@@ -386,15 +503,45 @@ export const chatService = {
       throw error;
     }
 
-    return mapSupabaseMessage(data as unknown as DbMessage, userId);
+    return mapSupabaseMessage(data as unknown as DbMessage, effectiveUserId);
   },
 
   async deleteMessage(messageId: string): Promise<void> {
-    const { error } = await supabase.from('messages').delete().eq('id', messageId);
+    // 1. Fetch message attachments to clean up any associated storage objects
+    const { data: msg } = await supabase
+      .from('messages')
+      .select('attachments')
+      .eq('id', messageId)
+      .maybeSingle();
+
+    // 2. Delete message row from database and verify affected rows
+    const { data, error } = await supabase
+      .from('messages')
+      .delete()
+      .eq('id', messageId)
+      .select('id');
 
     if (error) {
       console.error('Error deleting message from Supabase:', error);
       throw error;
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error('Message could not be deleted. You may not have permission to delete this message.');
+    }
+
+    // 3. Clean up attached storage assets if any exist
+    const rawAttachments = (msg?.attachments as Array<{ path?: string }>) || [];
+    const pathsToRemove = rawAttachments
+      .map((a) => a.path)
+      .filter((p): p is string => Boolean(p));
+
+    if (pathsToRemove.length > 0) {
+      try {
+        await supabase.storage.from(CHAT_STORAGE_BUCKET).remove(pathsToRemove);
+      } catch (err) {
+        console.warn('Non-fatal error removing deleted message attachments from storage:', err);
+      }
     }
   },
 
@@ -500,21 +647,79 @@ export const chatService = {
     }));
   },
 
+  /**
+   * Generates a short-lived signed URL for secure download or preview of a chat attachment.
+   */
+  async getSignedUrl(filePath: string, expiresInSeconds = 3600): Promise<string | null> {
+    if (!filePath) return null;
+    try {
+      const { data, error } = await supabase.storage
+        .from(CHAT_STORAGE_BUCKET)
+        .createSignedUrl(filePath, expiresInSeconds);
+
+      if (error) {
+        console.warn('Error creating signed URL for chat attachment:', error.message);
+        return null;
+      }
+
+      return data?.signedUrl || null;
+    } catch (err) {
+      console.warn('Unexpected error creating chat attachment signed URL:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Deletes an attachment binary asset from chat-attachments storage.
+   */
+  async deleteAttachment(filePath: string): Promise<boolean> {
+    if (!filePath) return false;
+    try {
+      const { error } = await supabase.storage
+        .from(CHAT_STORAGE_BUCKET)
+        .remove([filePath]);
+
+      if (error) {
+        console.warn('Error removing attachment from storage:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn('Exception removing attachment from storage:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Securely uploads an attachment for a chat channel with size, extension,
+   * path traversal, and channel authorization validation.
+   * Rolls back the uploaded storage asset if signed URL generation fails.
+   */
   async uploadAttachment(
     file: File,
     channelId: string
   ): Promise<{ name: string; size: string; type: string; url?: string; path?: string }> {
+    const validation = validateChatFile(file);
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Invalid file for upload.');
+    }
+
+    if (!channelId || !UUID_REGEX.test(channelId)) {
+      throw new Error('Invalid or missing channel ID: must be a valid UUID.');
+    }
+
     const formatSize = (bytes: number): string => {
       if (bytes < 1024) return `${bytes} B`;
       if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
       return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
 
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const filePath = `${channelId}/${Date.now()}-${safeName}`;
+    const sanitizedName = sanitizeChatFileName(file.name);
+    const filePath = `${channelId}/${Date.now()}-${sanitizedName}`;
 
+    // 1. Upload binary asset to Supabase Storage
     const { error: uploadError } = await supabase.storage
-      .from('chat-attachments')
+      .from(CHAT_STORAGE_BUCKET)
       .upload(filePath, file, {
         cacheControl: '3600',
         upsert: false,
@@ -522,28 +727,45 @@ export const chatService = {
 
     if (uploadError) {
       console.error('Error uploading chat attachment to Supabase Storage:', uploadError);
-      throw uploadError;
+      if (
+        uploadError.message?.toLowerCase().includes('bucket not found') ||
+        (uploadError as any).statusCode === '404'
+      ) {
+        throw new Error(
+          `Storage bucket '${CHAT_STORAGE_BUCKET}' does not exist yet. Please run migration 20261029000005_storage_chat_attachments.sql.`
+        );
+      }
+      throw new Error(`Chat attachment upload failed: ${uploadError.message}`);
     }
 
+    // 2. Generate signed URL for authenticated download/preview
     let downloadUrl = '';
     try {
-      const { data: signedData } = await supabase.storage
-        .from('chat-attachments')
+      const { data: signedData, error: signError } = await supabase.storage
+        .from(CHAT_STORAGE_BUCKET)
         .createSignedUrl(filePath, 60 * 60 * 24 * 7); // 7-day signed URL
+
+      if (signError) {
+        throw signError;
+      }
 
       if (signedData?.signedUrl) {
         downloadUrl = signedData.signedUrl;
-      } else {
-        const { data: pubData } = supabase.storage
-          .from('chat-attachments')
-          .getPublicUrl(filePath);
-        downloadUrl = pubData?.publicUrl || '';
       }
-    } catch {
-      const { data: pubData } = supabase.storage
-        .from('chat-attachments')
-        .getPublicUrl(filePath);
-      downloadUrl = pubData?.publicUrl || '';
+    } catch (signErr) {
+      console.error('Error generating signed URL, rolling back uploaded storage asset:', signErr);
+      let rollbackDetail = '';
+      // Compensating cleanup: remove uploaded asset from storage
+      try {
+        const { error: cleanupError } = await supabase.storage.from(CHAT_STORAGE_BUCKET).remove([filePath]);
+        if (cleanupError) {
+          rollbackDetail = ` (Compensating storage cleanup also failed: ${cleanupError.message})`;
+        }
+      } catch (cleanupErr) {
+        console.warn('Storage rollback cleanup error:', cleanupErr);
+        rollbackDetail = ` (Compensating storage cleanup error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)})`;
+      }
+      throw new Error(`Failed to generate secure URL for uploaded attachment${rollbackDetail}. Upload has been cancelled.`);
     }
 
     return {
@@ -553,6 +775,51 @@ export const chatService = {
       url: downloadUrl,
       path: filePath,
     };
+  },
+
+  /**
+   * Safely downloads an attachment by generating a short-lived signed URL (if path present)
+   * or using the stored URL, fetching as a blob with fallback.
+   */
+  async downloadAttachment(attachment: { name: string; url?: string; path?: string }): Promise<void> {
+    let downloadUrl = attachment.url;
+
+    if (attachment.path) {
+      const freshSignedUrl = await this.getSignedUrl(attachment.path, 600); // 10 minutes
+      if (freshSignedUrl) {
+        downloadUrl = freshSignedUrl;
+      }
+    }
+
+    if (!downloadUrl) {
+      throw new Error('Download URL could not be generated. Storage may be unavailable or attachment was removed.');
+    }
+
+    try {
+      const response = await fetch(downloadUrl);
+      if (!response.ok) {
+        throw new Error(`Download request failed with status: ${response.statusText}`);
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = attachment.name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.warn('Direct blob fetch failed, falling back to window navigation:', err);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.download = attachment.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   },
 
   subscribeToMessages(
@@ -572,7 +839,7 @@ export const chatService = {
           table: 'messages',
           filter: `channel_id=eq.${channelId}`,
         },
-        async (payload) => {
+        async (payload: any) => {
           const row = payload.new as unknown as DbMessage;
           if (!row || !row.id) return;
 
@@ -610,7 +877,7 @@ export const chatService = {
           table: 'messages',
           filter: `channel_id=eq.${channelId}`,
         },
-        async (payload) => {
+        async (payload: any) => {
           const row = payload.new as unknown as DbMessage;
           if (!row || !row.id) return;
 
@@ -648,7 +915,7 @@ export const chatService = {
           table: 'messages',
           filter: `channel_id=eq.${channelId}`,
         },
-        (payload) => {
+        (payload: any) => {
           const oldRow = payload.old as { id?: string } | undefined;
           if (oldRow?.id) {
             onDelete(oldRow.id);
@@ -689,7 +956,7 @@ export const chatService = {
         const state = presenceChannel.presenceState();
         onCountChange(Object.keys(state).length);
       })
-      .subscribe(async (status) => {
+      .subscribe(async (status: any) => {
         if (status === 'SUBSCRIBED') {
           await presenceChannel.track({
             user_id: user.id,

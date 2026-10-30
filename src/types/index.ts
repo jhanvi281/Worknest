@@ -134,7 +134,25 @@ export interface ChatChannel {
 }
 
 export type FileCategory = 'all' | 'presentations' | 'documents' | 'images' | 'other';
-export type FileType = 'PPT' | 'PPTX' | 'PDF' | 'DOC' | 'DOCX' | 'XLS' | 'XLSX' | 'PNG' | 'JPG' | 'ZIP';
+export type FileType =
+  | 'PPT'
+  | 'PPTX'
+  | 'PDF'
+  | 'DOC'
+  | 'DOCX'
+  | 'XLS'
+  | 'XLSX'
+  | 'PNG'
+  | 'JPG'
+  | 'JPEG'
+  | 'GIF'
+  | 'WEBP'
+  | 'SVG'
+  | 'ZIP'
+  | 'TXT'
+  | 'CSV'
+  | 'OTHER'
+  | string;
 
 export interface ProjectFile {
   id: string;
@@ -147,6 +165,22 @@ export interface ProjectFile {
   size: string;
   url?: string;
   previewUrl?: string;
+  storagePath?: string;
+  teamId?: string;
+  teamName?: string;
+  uploadedById?: string;
+  createdAt?: string;
+}
+
+export type MeetingType = 'Video Conference' | 'Subgroup Sync' | 'Project Standup' | 'Review';
+
+export interface MeetingParticipant {
+  id?: string;
+  userId?: string;
+  name: string;
+  avatar: string;
+  email?: string;
+  status?: 'invited' | 'accepted' | 'declined' | 'tentative';
 }
 
 export interface Meeting {
@@ -155,11 +189,140 @@ export interface Meeting {
   date: string;
   time: string;
   duration: string;
-  participants: { name: string; avatar: string }[];
+  durationMinutes?: number;
+  participants: MeetingParticipant[];
   organizer: string;
-  type: 'Video Conference' | 'Subgroup Sync' | 'Project Standup' | 'Review';
+  organizerId?: string;
+  organizerAvatar?: string;
+  type: MeetingType;
   description: string;
+  teamId?: string;
+  teamName?: string;
+  roomName?: string;
   isPast?: boolean;
+  createdAt?: string;
+}
+
+export type AIStage = 'idle' | 'context' | 'gemini' | 'actions';
+
+export type AIActionType =
+  | 'create_task'
+  | 'update_task'
+  | 'assign_task'
+  | 'delete_task'
+  | 'create_daily_log'
+  | 'create_meeting'
+  | 'cancel_meeting'
+  | 'invite_team_member'
+  | 'update_team_member_role'
+  | 'remove_team_member';
+
+export type AIActionStatus =
+  | 'proposed'
+  | 'awaiting_confirmation'
+  | 'executing'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export interface CreateTaskActionParams {
+  title: string;
+  description?: string;
+  priority?: TaskPriority;
+  status?: TaskStatus;
+  dueDate?: string;
+  category?: string;
+  assignedToId?: string;
+  assignedToName?: string;
+  teamId?: string;
+  subgroupId?: string;
+}
+
+export interface UpdateTaskActionParams {
+  taskId: string;
+  taskTitle?: string;
+  title?: string;
+  description?: string;
+  priority?: TaskPriority;
+  status?: TaskStatus;
+  progress?: number;
+  dueDate?: string;
+  category?: string;
+}
+
+export interface AssignTaskActionParams {
+  taskId: string;
+  taskTitle?: string;
+  assigneeId: string;
+  assigneeName: string;
+}
+
+export interface DeleteTaskActionParams {
+  taskId: string;
+  taskTitle: string;
+}
+
+export interface CreateDailyLogActionParams {
+  date?: string;
+  hoursWorked: number;
+  workCompleted: string;
+  challengesFaced?: string;
+  planForTomorrow?: string;
+}
+
+export interface CreateMeetingActionParams {
+  title: string;
+  description?: string;
+  meetingDate: string;
+  meetingTime: string;
+  durationMinutes: number;
+  type?: MeetingType;
+  teamId?: string;
+}
+
+export interface CancelMeetingActionParams {
+  meetingId: string;
+  meetingTitle: string;
+}
+
+export interface InviteTeamMemberActionParams {
+  teamId: string;
+  teamName: string;
+  email: string;
+  role: UserRole;
+}
+
+export interface UpdateTeamMemberRoleActionParams {
+  teamId: string;
+  teamName?: string;
+  memberId: string;
+  memberName: string;
+  role: UserRole;
+}
+
+export interface RemoveTeamMemberActionParams {
+  teamId: string;
+  teamName: string;
+  memberId: string;
+  memberName: string;
+}
+
+export type AIActionParams = Record<string, any>;
+
+export interface AIAction {
+  id: string;
+  type: AIActionType;
+  description: string;
+  params: Record<string, any>;
+  requiresConfirmation: boolean;
+  status: AIActionStatus;
+  isDestructive?: boolean;
+  entityId?: string;
+  entityTitle?: string;
+  entityType?: 'task' | 'meeting' | 'daily_log' | 'team_member' | 'team';
+  validationError?: string;
+  executionError?: string;
+  executedAt?: string;
 }
 
 export interface AIMessage {
@@ -172,6 +335,9 @@ export interface AIMessage {
     description: string;
     type: 'success' | 'warning' | 'info' | 'urgent';
   }[];
+  isError?: boolean;
+  model?: string;
+  actions?: AIAction[];
 }
 
 export interface NotificationItem {

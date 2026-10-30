@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, isClerkAuthMode } from '../lib/supabase';
 import type { DailyLog } from '../types';
 
 export const mapSupabaseDailyLog = (l: any): DailyLog => {
@@ -6,7 +6,7 @@ export const mapSupabaseDailyLog = (l: any): DailyLog => {
   const name = profile?.full_name || (profile?.email ? profile.email.split('@')[0] : 'User');
   const avatar =
     profile?.avatar_url ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=6366f1&color=fff`;
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=f97316&color=fff`;
 
   return {
     id: l.id,
@@ -68,13 +68,22 @@ export const dailyLogService = {
     },
     userId: string
   ): Promise<DailyLog> {
+    let effectiveUserId: string | undefined = userId;
+    if (!effectiveUserId && !isClerkAuthMode) {
+      const { data: authData } = await supabase.auth.getUser();
+      effectiveUserId = authData?.user?.id;
+    }
+    if (!effectiveUserId) {
+      throw new Error('Authentication required to submit a daily log.');
+    }
+
     const targetDate = newLog.date || new Date().toISOString().split('T')[0];
 
     // Check if user already submitted a log for targetDate
     const { data: existing } = await supabase
       .from('daily_logs')
       .select('id')
-      .eq('user_id', userId)
+      .eq('user_id', effectiveUserId)
       .eq('date', targetDate)
       .maybeSingle();
 
@@ -120,7 +129,7 @@ export const dailyLogService = {
     } else {
       // Insert new log row
       const payload: any = {
-        user_id: userId,
+        user_id: effectiveUserId,
         team_id: newLog.teamId || null,
         subgroup_id: newLog.subgroupId || null,
         date: targetDate,
@@ -196,5 +205,32 @@ export const dailyLogService = {
     }
 
     return mapSupabaseDailyLog(data);
+  },
+
+  async deleteDailyLog(logId: string, userId: string): Promise<void> {
+    let effectiveUserId: string | undefined = userId;
+    if (!effectiveUserId && !isClerkAuthMode) {
+      const { data: authData } = await supabase.auth.getUser();
+      effectiveUserId = authData?.user?.id;
+    }
+    if (!logId || !effectiveUserId) {
+      throw new Error('Log ID and authenticated user are required to delete a daily log.');
+    }
+
+    const { data, error } = await supabase
+      .from('daily_logs')
+      .delete()
+      .eq('id', logId)
+      .eq('user_id', effectiveUserId)
+      .select('id');
+
+    if (error) {
+      console.error('Error deleting daily log from Supabase:', error);
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error('Daily log could not be deleted. It may not exist or you do not have permission to delete it.');
+    }
   },
 };

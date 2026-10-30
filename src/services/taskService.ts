@@ -1,10 +1,10 @@
-import { supabase } from '../lib/supabase';
+import { supabase, isClerkAuthMode } from '../lib/supabase';
 import type { Task, TaskPriority, TaskStatus } from '../types';
 
 export const mapSupabaseTask = (t: any): Task => {
   const assigned = t.assigned_profile;
   const assignedName = assigned?.full_name || (assigned?.email ? assigned.email.split('@')[0] : undefined);
-  const assignedAvatar = assigned?.avatar_url || (assignedName ? `https://ui-avatars.com/api/?name=${encodeURIComponent(assignedName)}&background=6366f1&color=fff` : undefined);
+  const assignedAvatar = assigned?.avatar_url || (assignedName ? `https://ui-avatars.com/api/?name=${encodeURIComponent(assignedName)}&background=f97316&color=fff` : undefined);
 
   return {
     id: t.id,
@@ -27,7 +27,7 @@ export const mapSupabaseTask = (t: any): Task => {
 };
 
 export const taskService = {
-  async fetchUserTasks(userId: string): Promise<Task[]> {
+  async fetchUserTasks(_userId?: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
       .select(`
@@ -48,7 +48,6 @@ export const taskService = {
         assigned_profile:assigned_to(id, full_name, email, avatar_url),
         subgroup:subgroup_id(id, name)
       `)
-      .or(`assigned_to.eq.${userId},created_by.eq.${userId}`)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -74,6 +73,16 @@ export const taskService = {
     },
     userId: string
   ): Promise<Task> {
+    // Authenticated session check to ensure identity integrity (prioritizes canonical profile UUID)
+    let effectiveUserId: string | undefined = userId;
+    if (!effectiveUserId && !isClerkAuthMode) {
+      const { data: authData } = await supabase.auth.getUser();
+      effectiveUserId = authData?.user?.id;
+    }
+    if (!effectiveUserId) {
+      throw new Error('Authentication required to create a task.');
+    }
+
     const status = newTask.status || 'todo';
     const progress =
       newTask.progress !== undefined
@@ -92,10 +101,10 @@ export const taskService = {
       progress,
       due_date: newTask.dueDate || null,
       category: newTask.category || 'General',
-      created_by: userId,
+      created_by: effectiveUserId,
       team_id: newTask.teamId || null,
       subgroup_id: newTask.subgroupId || null,
-      assigned_to: newTask.assignedToId || (newTask.teamId ? null : userId),
+      assigned_to: newTask.assignedToId || (newTask.teamId ? null : effectiveUserId),
       completed_at: status === 'completed' ? new Date().toISOString() : null,
     };
 
@@ -232,10 +241,19 @@ export const taskService = {
   },
 
   async deleteTask(taskId: string): Promise<void> {
-    const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+    const { data, error } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('id', taskId)
+      .select('id');
+
     if (error) {
       console.error('Error deleting task from Supabase:', error);
       throw error;
+    }
+
+    if (!data || data.length === 0) {
+      throw new Error('Task could not be deleted. It may not exist or you do not have permission to delete it.');
     }
   },
 };
