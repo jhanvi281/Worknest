@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useSignUp } from '@clerk/clerk-react';
 import { useApp } from '../../context/AppContext';
-import { Layers, ArrowLeft, Mail, Lock, User, Loader2, KeyRound } from 'lucide-react';
+import { ArrowLeft, Mail, Lock, User, Loader2, KeyRound } from 'lucide-react';
+import { Logo } from '../common/Logo';
 import { supabase, isClerkAuthMode } from '../../lib/supabase';
 
 export const SignUpPage: React.FC = () => {
@@ -175,10 +176,8 @@ export const SignUpPage: React.FC = () => {
           <ArrowLeft className="w-4 h-4" /> Back to home
         </button>
 
-        <div className="flex justify-center">
-          <div className="w-12 h-12 rounded-2xl bg-[#F97316] flex items-center justify-center text-white shadow-sm">
-            <Layers className="w-7 h-7" />
-          </div>
+        <div className="flex justify-center mb-1">
+          <Logo variant="icon" size="xl" />
         </div>
         <h2 className="mt-4 text-center text-2xl font-bold tracking-tight text-[#171717] dark:text-[#FAFAFA]">
           {pendingVerification ? 'Verify your email' : 'Create your WorkNest account'}

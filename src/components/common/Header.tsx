@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
+import { Logo } from './Logo';
 import {
   Search,
   Plus,
@@ -101,6 +102,10 @@ export const Header: React.FC = () => {
         >
           <Menu className="w-5 h-5" />
         </button>
+
+        <div className="md:hidden flex items-center cursor-pointer" onClick={() => setCurrentView('dashboard')}>
+          <Logo variant="compact" size="sm" />
+        </div>
 
         {/* Global Search Bar */}
         <button

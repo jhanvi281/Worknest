@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useSignIn } from '@clerk/clerk-react';
 import { useApp } from '../../context/AppContext';
 import { supabase, isClerkAuthMode } from '../../lib/supabase';
-import { Layers, ArrowLeft, Mail, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Mail, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { Logo } from '../common/Logo';
 
 export const ForgotPasswordPage: React.FC = () => {
   const { setCurrentView } = useApp();
@@ -64,10 +65,8 @@ export const ForgotPasswordPage: React.FC = () => {
           <ArrowLeft className="w-4 h-4" /> Back to sign in
         </button>
 
-        <div className="flex justify-center">
-          <div className="w-12 h-12 rounded-2xl bg-[#F97316] flex items-center justify-center text-white shadow-sm">
-            <Layers className="w-7 h-7" />
-          </div>
+        <div className="flex justify-center mb-1">
+          <Logo variant="icon" size="xl" />
         </div>
         <h2 className="mt-4 text-center text-2xl font-bold tracking-tight text-[#171717] dark:text-[#FAFAFA]">
           Reset your password

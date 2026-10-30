@@ -33,8 +33,9 @@ import { NewTaskModal } from './components/tasks/NewTaskModal';
 import { CreateTeamModal } from './components/teams/CreateTeamModal';
 import { ScheduleMeetingModal } from './components/meetings/ScheduleMeetingModal';
 import { FileUploadModal } from './components/files/FileUploadModal';
+import { Logo } from './components/common/Logo';
 
-import { Layers, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { AuthenticateWithRedirectCallback } from '@clerk/clerk-react';
 
 const AppContent: React.FC = () => {
@@ -59,9 +60,7 @@ const AppContent: React.FC = () => {
     return (
       <div className="min-h-screen bg-white dark:bg-[#0A0A0A] flex flex-col items-center justify-center transition-colors">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-[#F97316] flex items-center justify-center text-white shadow-lg shadow-orange-500/20">
-            <Layers className="w-7 h-7" />
-          </div>
+          <Logo variant="icon" size="xl" />
           <div className="flex items-center gap-2 text-sm font-semibold text-[#737373] dark:text-[#A3A3A3]">
             <Loader2 className="w-5 h-5 text-[#F97316] animate-spin" />
             <span>Completing Google authentication...</span>
@@ -76,9 +75,7 @@ const AppContent: React.FC = () => {
     return (
       <div className="min-h-screen bg-white dark:bg-[#0A0A0A] flex flex-col items-center justify-center transition-colors">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-[#F97316] flex items-center justify-center text-white shadow-lg shadow-orange-500/20">
-            <Layers className="w-7 h-7" />
-          </div>
+          <Logo variant="icon" size="xl" />
           <div className="flex items-center gap-2 text-sm font-semibold text-[#737373] dark:text-[#A3A3A3]">
             <Loader2 className="w-5 h-5 text-[#F97316] animate-spin" />
             <span>Restoring session...</span>

@@ -14,8 +14,8 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
-  Layers,
 } from 'lucide-react';
+import { Logo } from './Logo';
 import type { AppView } from '../../types';
 
 export const Sidebar: React.FC = () => {
@@ -71,17 +71,13 @@ export const Sidebar: React.FC = () => {
       <div className="h-16 px-4 flex items-center justify-between border-b border-[#E5E5E5] dark:border-[#333333]">
         <div
           onClick={() => handleNavClick('dashboard')}
-          className="flex items-center gap-3 cursor-pointer group"
+          className="flex items-center gap-3 cursor-pointer group overflow-hidden"
         >
-          <div className="w-9 h-9 rounded-xl bg-[#F97316] flex items-center justify-center text-white shadow-sm shrink-0">
-            <Layers className="w-5 h-5" />
-          </div>
-          {(!isCollapsed || isMobileSidebarOpen) && (
-            <div className="animate-fade-in">
-              <span className="text-lg font-bold tracking-tight text-[#171717] dark:text-[#FAFAFA]">WorkNest</span>
-              <span className="block text-[10px] text-[#737373] dark:text-[#A3A3A3] font-medium tracking-wide">Enterprise SaaS</span>
-            </div>
-          )}
+          <Logo
+            variant={isCollapsed && !isMobileSidebarOpen ? 'compact' : 'full'}
+            size="md"
+            subtitle="Enterprise SaaS"
+          />
         </div>
 
         {/* Mobile close button */}

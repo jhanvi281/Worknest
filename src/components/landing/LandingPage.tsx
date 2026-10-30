@@ -1,7 +1,7 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
+import { Logo } from '../common/Logo';
 import {
-  Layers,
   CheckSquare,
   Users,
   CalendarCheck,
@@ -37,16 +37,8 @@ export const LandingPage: React.FC = () => {
     <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#FAFAFA] flex flex-col font-sans transition-colors">
       {/* LANDING HEADER */}
       <header className="sticky top-0 z-40 h-20 bg-white/80 dark:bg-[#141414]/80 backdrop-blur-lg border-b border-[#E5E5E5] dark:border-[#333333] px-6 lg:px-12 flex items-center justify-between">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setCurrentView('landing')}>
-          <div className="w-10 h-10 rounded-2xl bg-[#F97316] flex items-center justify-center text-white shadow-sm">
-            <Layers className="w-6 h-6" />
-          </div>
-          <div>
-            <span className="text-xl font-bold tracking-tight text-[#171717] dark:text-[#FAFAFA]">WorkNest</span>
-            <span className="hidden sm:block text-[11px] text-[#737373] dark:text-[#A3A3A3] font-medium">
-              Everything your work needs, in one place.
-            </span>
-          </div>
+        <div className="cursor-pointer" onClick={() => setCurrentView('landing')}>
+          <Logo variant="full" size="lg" subtitle="Everything your work needs, in one place." />
         </div>
 
         {/* Navigation items */}
@@ -389,8 +381,8 @@ export const LandingPage: React.FC = () => {
       <footer className="mt-auto py-12 px-6 lg:px-12 bg-white dark:bg-[#0A0A0A] border-t border-[#E5E5E5] dark:border-[#333333] text-xs text-[#737373] dark:text-[#A3A3A3]">
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
           <div>
-            <div className="flex items-center gap-2 font-bold text-[#171717] dark:text-[#FAFAFA] text-base mb-2">
-              <Layers className="w-5 h-5 text-[#F97316]" /> WorkNest
+            <div className="mb-2">
+              <Logo variant="full" size="sm" onClick={() => scrollTo('features')} />
             </div>
             <p className="text-xs text-[#737373] dark:text-[#A3A3A3] leading-relaxed">
               Everything your work needs, in one place. AI-powered personal and team productivity platform.

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" fill="none">
+  <defs>
+    <!-- Background charcoal linear gradient -->
+    <linearGradient id="wnBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181818" />
+      <stop offset="50%" stop-color="#121212" />
+      <stop offset="100%" stop-color="#0B0B0B" />
+    </linearGradient>
+
+    <!-- Top plate gradient (rich warm orange with golden highlight) -->
+    <linearGradient id="wnTopPlate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFA238" />
+      <stop offset="40%" stop-color="#FF8015" />
+      <stop offset="100%" stop-color="#F36600" />
+    </linearGradient>
+
+    <!-- Middle plate gradient -->
+    <linearGradient id="wnMidPlate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF8B22" />
+      <stop offset="60%" stop-color="#FF740A" />
+      <stop offset="100%" stop-color="#E35800" />
+    </linearGradient>
+
+    <!-- Bottom plate gradient -->
+    <linearGradient id="wnBotPlate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF790F" />
+      <stop offset="60%" stop-color="#F06500" />
+      <stop offset="100%" stop-color="#D14C00" />
+    </linearGradient>
+
+    <!-- Subtle container glow -->
+    <filter id="wnGlow" x="-15%" y="-15%" width="130%" height="130%">
+      <feGaussianBlur stdDeviation="1.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Container Box with rounded squircle, charcoal fill & orange glowing stroke -->
+  <rect x="5" y="5" width="90" height="90" rx="22" fill="url(#wnBgGrad)" stroke="#FF790F" stroke-width="1.5" stroke-opacity="0.45" />
+  <rect x="5.75" y="5.75" width="88.5" height="88.5" rx="21.25" fill="none" stroke="#FF790F" stroke-width="0.5" stroke-opacity="0.2" />
+
+  <!-- 1. TOP ISOMETRIC LAYER (Hexagonal isometric plate with rounded vertices) -->
+  <g>
+    <!-- Top plate surface -->
+    <path d="M 46.5 22.8 C 48.7 21.6 51.3 21.6 53.5 22.8 L 76.8 35.8 C 79 37 79.8 39.4 78.6 41 L 53.5 53.8 C 51.3 54.9 48.7 54.9 46.5 53.8 L 21.4 41 C 20.2 39.4 21 37 23.2 35.8 Z" fill="url(#wnTopPlate)" />
+    <!-- Bevel depth highlight -->
+    <path d="M 47 23 L 76.5 35.8" stroke="#FFE0B2" stroke-width="0.8" stroke-linecap="round" stroke-opacity="0.6" />
+  </g>
+
+  <!-- 2. MIDDLE ISOMETRIC LAYER (Stacked curved plate with rounded ends) -->
+  <path d="M 20.8 45.5 C 20.8 43.8 22.2 42.8 23.6 43.6 L 47.2 55.6 C 48.9 56.5 51.1 56.5 52.8 55.6 L 76.4 43.6 C 77.8 42.8 79.2 43.8 79.2 45.5 L 79.2 49.2 C 79.2 50.9 78.1 52.3 76.6 53.1 L 52.8 65.2 C 51.1 66.1 48.9 66.1 47.2 65.2 L 23.4 53.1 C 21.9 52.3 20.8 50.9 20.8 49.2 Z" fill="url(#wnMidPlate)" />
+
+  <!-- 3. BOTTOM ISOMETRIC LAYER (Lowest stacked curved plate with rounded ends) -->
+  <path d="M 20.8 58.5 C 20.8 56.8 22.2 55.8 23.6 55.6 L 47.2 67.6 C 48.9 68.5 51.1 68.5 52.8 67.6 L 76.4 55.6 C 77.8 54.8 79.2 55.8 79.2 57.5 L 79.2 61.2 C 79.2 62.9 78.1 64.3 76.6 65.1 L 52.8 77.2 C 51.1 78.1 48.9 78.1 47.2 77.2 L 23.4 65.1 C 21.9 64.3 20.8 62.9 20.8 61.2 Z" fill="url(#wnBotPlate)" />
+</svg>
